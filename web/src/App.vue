@@ -72,6 +72,9 @@ const error = ref('')
 const success = ref('')
 const activeSection = ref<Section>('overview')
 const accountForm = ref({ phone: '', displayName: '' })
+const authorizingAccountID = ref<number | null>(null)
+const telegramCode = ref('')
+const telegramPassword = ref('')
 const discoveryForm = ref({ query: '', sourceType: 'public_chat' })
 const campaignForm = ref({ name: '', kind: 'direct_message', target: '', message: '', runAt: '' })
 
@@ -186,6 +189,73 @@ async function deleteAccount(id: number) {
     success.value = '账号记录已删除。'
   } catch (err) {
     error.value = messageFrom(err, '删除账号失败')
+  } finally {
+    saving.value = ''
+  }
+}
+
+async function requestTelegramCode(item: TelegramAccount) {
+  saving.value = `auth-${item.id}`
+  clearNotices()
+  try {
+    const result = await api.requestAccountCode(item.id)
+    accounts.value = await api.accounts()
+    if (result.status === 'authorized') {
+      authorizingAccountID.value = null
+      success.value = 'Telegram 账号已授权。'
+    } else {
+      authorizingAccountID.value = item.id
+      telegramCode.value = ''
+      success.value = '验证码已发送，请查看 Telegram 或短信。'
+    }
+  } catch (err) {
+    accounts.value = await api.accounts().catch(() => accounts.value)
+    error.value = messageFrom(err, '发送验证码失败')
+  } finally {
+    saving.value = ''
+  }
+}
+
+function openAccountAuthorization(item: TelegramAccount) {
+  authorizingAccountID.value = item.id
+  telegramCode.value = ''
+  telegramPassword.value = ''
+  clearNotices()
+}
+
+async function verifyTelegramCode(item: TelegramAccount) {
+  saving.value = `auth-${item.id}`
+  clearNotices()
+  try {
+    const result = await api.verifyAccountCode(item.id, telegramCode.value)
+    accounts.value = await api.accounts()
+    telegramCode.value = ''
+    if (result.status === 'password_required') {
+      success.value = '验证码正确，请输入 Telegram 两步验证密码。'
+    } else {
+      authorizingAccountID.value = null
+      success.value = 'Telegram 账号已授权。'
+    }
+  } catch (err) {
+    accounts.value = await api.accounts().catch(() => accounts.value)
+    error.value = messageFrom(err, '验证验证码失败')
+  } finally {
+    saving.value = ''
+  }
+}
+
+async function verifyTelegramPassword(item: TelegramAccount) {
+  saving.value = `auth-${item.id}`
+  clearNotices()
+  try {
+    await api.verifyAccountPassword(item.id, telegramPassword.value)
+    accounts.value = await api.accounts()
+    telegramPassword.value = ''
+    authorizingAccountID.value = null
+    success.value = 'Telegram 账号已授权。'
+  } catch (err) {
+    accounts.value = await api.accounts().catch(() => accounts.value)
+    error.value = messageFrom(err, '两步验证失败')
   } finally {
     saving.value = ''
   }
@@ -314,7 +384,7 @@ function formatDate(value?: string) {
 }
 
 function statusText(value: string) {
-  return ({ pending: '待授权', online: '在线', offline: '离线', draft: '草稿', paused: '已暂停', pending_connection: '等待账号连接', ready: '就绪', running: '执行中', completed: '已完成', failed: '失败' } as Record<string, string>)[value] || value
+  return ({ pending: '待授权', code_sent: '等待验证码', password_required: '等待 2FA', authorized: '已授权', online: '在线', offline: '离线', error: '授权失败', draft: '草稿', paused: '已暂停', pending_connection: '等待账号连接', ready: '就绪', running: '执行中', completed: '已完成', failed: '失败' } as Record<string, string>)[value] || value
 }
 
 function sourceText(value: string) {
@@ -390,7 +460,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncSection))
       <section v-else-if="activeSection === 'accounts'" class="workspace">
         <div class="capability-banner"><Smartphone :size="19" /><div><strong>{{ capabilities?.telegramConfigured ? 'Telegram API 已配置' : '等待配置 Telegram API' }}</strong><p>账号记录会持久保存；真实登录仍需要 API ID/hash、短信验证码和可选 2FA。</p></div></div>
         <form class="workspace-panel form-grid account-form" @submit.prevent="createAccount"><label>手机号<input v-model="accountForm.phone" placeholder="+8613800138000" autocomplete="tel" required /></label><label>账号名称<input v-model="accountForm.displayName" placeholder="例如：获客账号 A" maxlength="80" /></label><button class="primary" :disabled="saving === 'account'"><Plus :size="17" />{{ saving === 'account' ? '添加中' : '添加账号' }}</button></form>
-        <div class="workspace-panel"><div class="section-heading"><div><h2>账号列表</h2><p>{{ accounts.length }} 个账号记录</p></div></div><div v-if="accounts.length" class="table-wrap"><table><thead><tr><th>账号</th><th>手机号</th><th>状态</th><th>最后在线</th><th class="actions">操作</th></tr></thead><tbody><tr v-for="item in accounts" :key="item.id"><td>{{ item.displayName || '未命名账号' }}</td><td>{{ item.phone }}</td><td><span class="status" :class="item.status === 'online' ? 'ok' : 'muted'">{{ statusText(item.status) }}</span></td><td>{{ formatDate(item.lastSeenAt) }}</td><td class="actions"><button class="icon-button danger" title="删除账号" :disabled="saving === `account-${item.id}`" @click="deleteAccount(item.id)"><Trash2 :size="16" /></button></td></tr></tbody></table></div><div v-else class="empty"><Users :size="28" /><p>还没有登记矩阵账号</p></div></div>
+        <div class="workspace-panel"><div class="section-heading"><div><h2>账号列表</h2><p>{{ accounts.length }} 个账号记录</p></div></div><div v-if="accounts.length" class="table-wrap"><table><thead><tr><th>账号</th><th>手机号</th><th>状态</th><th>最后授权</th><th class="account-actions">操作</th></tr></thead><tbody><template v-for="item in accounts" :key="item.id"><tr><td><strong>{{ item.displayName || '未命名账号' }}</strong><small v-if="item.username" class="account-username">@{{ item.username }}</small><small v-if="item.lastError" class="account-error">{{ item.lastError }}</small></td><td>{{ item.phone }}</td><td><span class="status" :class="item.status === 'online' || item.status === 'authorized' ? 'ok' : 'muted'">{{ statusText(item.status) }}</span></td><td>{{ formatDate(item.lastSeenAt) }}</td><td class="account-actions"><button v-if="item.status === 'pending' || item.status === 'offline' || item.status === 'error'" class="secondary compact" :disabled="saving === `auth-${item.id}` || !capabilities?.telegramConfigured" :title="capabilities?.telegramConfigured ? '发送 Telegram 验证码' : '请先配置 Telegram API'" @click="requestTelegramCode(item)"><Smartphone :size="15" />发送验证码</button><button v-else-if="item.status === 'code_sent'" class="secondary compact" @click="openAccountAuthorization(item)">输入验证码</button><button v-else-if="item.status === 'password_required'" class="secondary compact" @click="openAccountAuthorization(item)">输入 2FA</button><button class="icon-button danger" title="删除账号" :disabled="saving === `account-${item.id}`" @click="deleteAccount(item.id)"><Trash2 :size="16" /></button></td></tr><tr v-if="authorizingAccountID === item.id && (item.status === 'code_sent' || item.status === 'password_required')" class="auth-step-row"><td colspan="5"><form v-if="item.status === 'code_sent'" class="account-auth-step" @submit.prevent="verifyTelegramCode(item)"><div><strong>输入 Telegram 验证码</strong><p>验证码发送于 {{ formatDate(item.codeSentAt) }}</p></div><input v-model="telegramCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{3,8}" placeholder="验证码" required /><button class="primary" :disabled="saving === `auth-${item.id}`"><ShieldCheck :size="16" />验证</button></form><form v-else class="account-auth-step" @submit.prevent="verifyTelegramPassword(item)"><div><strong>输入两步验证密码</strong><p>密码只用于本次 Telegram SRP 验证，不会保存。</p></div><input v-model="telegramPassword" type="password" autocomplete="current-password" placeholder="2FA 密码" maxlength="256" required /><button class="primary" :disabled="saving === `auth-${item.id}`"><ShieldCheck :size="16" />完成授权</button></form></td></tr></template></tbody></table></div><div v-else class="empty"><Users :size="28" /><p>还没有登记矩阵账号</p></div></div>
       </section>
 
       <section v-else-if="activeSection === 'discover'" class="workspace">

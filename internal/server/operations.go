@@ -2,6 +2,7 @@ package server
 
 import (
 	"database/sql"
+	"errors"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -15,8 +16,9 @@ import (
 var phonePattern = regexp.MustCompile(`^\+?[0-9]{7,15}$`)
 
 type operationsService struct {
-	db  *sql.DB
-	cfg config.Config
+	db         *sql.DB
+	cfg        config.Config
+	authorizer accountAuthorizer
 }
 
 type telegramAccount struct {
@@ -24,7 +26,10 @@ type telegramAccount struct {
 	Phone       string  `json:"phone"`
 	DisplayName string  `json:"displayName"`
 	Status      string  `json:"status"`
+	Username    string  `json:"username"`
+	LastError   string  `json:"lastError"`
 	LastSeenAt  *string `json:"lastSeenAt"`
+	CodeSentAt  *string `json:"codeSentAt"`
 	CreatedAt   string  `json:"createdAt"`
 }
 
@@ -59,11 +64,18 @@ type relaySettings struct {
 	UpdatedAt      string `json:"updatedAt"`
 }
 
-func registerOperationsRoutes(group *gin.RouterGroup, cfg config.Config, db *sql.DB) {
-	service := &operationsService{db: db, cfg: cfg}
+func registerOperationsRoutes(group *gin.RouterGroup, cfg config.Config, db *sql.DB, authorizers ...accountAuthorizer) {
+	authorizer := newGotdAccountAuthorizer(cfg, db)
+	if len(authorizers) > 0 && authorizers[0] != nil {
+		authorizer = authorizers[0]
+	}
+	service := &operationsService{db: db, cfg: cfg, authorizer: authorizer}
 	group.GET("/capabilities", service.capabilities)
 	group.GET("/accounts", service.listAccounts)
 	group.POST("/accounts", service.createAccount)
+	group.POST("/accounts/:id/auth/code", service.requestAccountCode)
+	group.POST("/accounts/:id/auth/verify", service.verifyAccountCode)
+	group.POST("/accounts/:id/auth/password", service.verifyAccountPassword)
 	group.DELETE("/accounts/:id", service.deleteAccount)
 	group.GET("/discovery", service.listDiscovery)
 	group.POST("/discovery", service.createDiscovery)
@@ -91,7 +103,7 @@ func (s *operationsService) capabilities(c *gin.Context) {
 
 func (s *operationsService) listAccounts(c *gin.Context) {
 	rows, err := s.db.QueryContext(c.Request.Context(), `
-		SELECT id, phone, display_name, status, last_seen_at, created_at
+		SELECT id, phone, display_name, status, username, last_error, last_seen_at, auth_code_sent_at, created_at
 		FROM telegram_accounts ORDER BY created_at DESC, id DESC
 	`)
 	if err != nil {
@@ -102,13 +114,16 @@ func (s *operationsService) listAccounts(c *gin.Context) {
 	accounts := make([]telegramAccount, 0)
 	for rows.Next() {
 		var item telegramAccount
-		var lastSeen sql.NullString
-		if err := rows.Scan(&item.ID, &item.Phone, &item.DisplayName, &item.Status, &lastSeen, &item.CreatedAt); err != nil {
+		var lastSeen, codeSent sql.NullString
+		if err := rows.Scan(&item.ID, &item.Phone, &item.DisplayName, &item.Status, &item.Username, &item.LastError, &lastSeen, &codeSent, &item.CreatedAt); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取账号列表失败"})
 			return
 		}
 		if lastSeen.Valid {
 			item.LastSeenAt = &lastSeen.String
+		}
+		if codeSent.Valid {
+			item.CodeSentAt = &codeSent.String
 		}
 		accounts = append(accounts, item)
 	}
@@ -151,6 +166,164 @@ func (s *operationsService) createAccount(c *gin.Context) {
 
 func (s *operationsService) deleteAccount(c *gin.Context) {
 	s.deleteByID(c, "telegram_accounts", "账号")
+}
+
+func (s *operationsService) requestAccountCode(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	phone, _, status, ok := s.accountAuthState(c, id)
+	if !ok {
+		return
+	}
+	if status == "authorized" || status == "online" {
+		c.JSON(http.StatusConflict, gin.H{"error": "该账号已经完成授权"})
+		return
+	}
+	result, err := s.authorizer.RequestCode(c.Request.Context(), id, phone)
+	if err != nil {
+		s.storeAccountAuthError(c, id, err)
+		return
+	}
+	if result.Status == "authorized" {
+		if !s.storeAccountAuthorization(c, id, result) {
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "authorized"})
+		return
+	}
+	if result.Status != "code_sent" || result.CodeHash == "" {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Telegram 未返回有效验证码状态"})
+		return
+	}
+	if _, err := s.db.ExecContext(c.Request.Context(), `
+		UPDATE telegram_accounts
+		SET status = 'code_sent', auth_code_hash = ?, auth_code_sent_at = CURRENT_TIMESTAMP,
+			last_error = '', updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, result.CodeHash, id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存验证码状态失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "code_sent"})
+}
+
+func (s *operationsService) verifyAccountCode(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var input struct {
+		Code string `json:"code"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请输入验证码"})
+		return
+	}
+	input.Code = strings.TrimSpace(input.Code)
+	if matched, _ := regexp.MatchString(`^[0-9]{3,8}$`, input.Code); !matched {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "验证码格式不正确"})
+		return
+	}
+	phone, codeHash, status, ok := s.accountAuthState(c, id)
+	if !ok {
+		return
+	}
+	if status != "code_sent" || codeHash == "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "请先发送验证码"})
+		return
+	}
+	result, err := s.authorizer.VerifyCode(c.Request.Context(), id, phone, codeHash, input.Code)
+	if err != nil {
+		s.storeAccountAuthError(c, id, err)
+		return
+	}
+	if result.Status == "password_required" {
+		if _, err := s.db.ExecContext(c.Request.Context(), "UPDATE telegram_accounts SET status = 'password_required', last_error = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?", id); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存两步验证状态失败"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "password_required"})
+		return
+	}
+	if !s.storeAccountAuthorization(c, id, result) {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "authorized"})
+}
+
+func (s *operationsService) verifyAccountPassword(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var input struct {
+		Password string `json:"password"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil || input.Password == "" || len(input.Password) > 256 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请输入有效的两步验证密码"})
+		return
+	}
+	_, _, status, ok := s.accountAuthState(c, id)
+	if !ok {
+		return
+	}
+	if status != "password_required" {
+		c.JSON(http.StatusConflict, gin.H{"error": "该账号当前不需要两步验证密码"})
+		return
+	}
+	result, err := s.authorizer.VerifyPassword(c.Request.Context(), id, input.Password)
+	if err != nil {
+		s.storeAccountAuthError(c, id, err)
+		return
+	}
+	if !s.storeAccountAuthorization(c, id, result) {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "authorized"})
+}
+
+func (s *operationsService) accountAuthState(c *gin.Context, id int64) (phone, codeHash, status string, ok bool) {
+	if err := s.db.QueryRowContext(c.Request.Context(), "SELECT phone, auth_code_hash, status FROM telegram_accounts WHERE id = ?", id).Scan(&phone, &codeHash, &status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "账号不存在"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取账号授权状态失败"})
+		}
+		return "", "", "", false
+	}
+	return phone, codeHash, status, true
+}
+
+func (s *operationsService) storeAccountAuthorization(c *gin.Context, id int64, result accountAuthResult) bool {
+	if result.Status != "authorized" {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Telegram 未返回有效授权状态"})
+		return false
+	}
+	_, err := s.db.ExecContext(c.Request.Context(), `
+		UPDATE telegram_accounts
+		SET status = 'authorized', telegram_user_id = ?, username = ?,
+			display_name = CASE WHEN display_name = '' THEN ? ELSE display_name END,
+			auth_code_hash = '', auth_code_sent_at = NULL, last_error = '',
+			last_seen_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, result.UserID, result.Username, result.DisplayName, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存 Telegram 授权失败"})
+		return false
+	}
+	return true
+}
+
+func (s *operationsService) storeAccountAuthError(c *gin.Context, id int64, authErr error) {
+	message := telegramErrorMessage(authErr)
+	statusCode := http.StatusBadGateway
+	if errors.Is(authErr, errTelegramNotConfigured) {
+		statusCode = http.StatusServiceUnavailable
+	}
+	_, _ = s.db.ExecContext(c.Request.Context(), "UPDATE telegram_accounts SET last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", message, id)
+	c.JSON(statusCode, gin.H{"error": message})
 }
 
 func (s *operationsService) listDiscovery(c *gin.Context) {

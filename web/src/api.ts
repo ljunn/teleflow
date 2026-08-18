@@ -44,7 +44,10 @@ export interface TelegramAccount {
   phone: string
   displayName: string
   status: string
+  username: string
+  lastError: string
   lastSeenAt?: string
+  codeSentAt?: string
   createdAt: string
 }
 
@@ -101,6 +104,9 @@ export const api = {
   capabilities: () => request<Capabilities>('/api/v1/capabilities'),
   accounts: () => request<TelegramAccount[]>('/api/v1/accounts'),
   createAccount: (input: { phone: string; displayName: string }) => request<{ id: number; status: string }>('/api/v1/accounts', { method: 'POST', body: JSON.stringify(input) }),
+  requestAccountCode: (id: number) => request<{ status: string }>(`/api/v1/accounts/${id}/auth/code`, { method: 'POST', body: '{}' }),
+  verifyAccountCode: (id: number, code: string) => request<{ status: string }>(`/api/v1/accounts/${id}/auth/verify`, { method: 'POST', body: JSON.stringify({ code }) }),
+  verifyAccountPassword: (id: number, password: string) => request<{ status: string }>(`/api/v1/accounts/${id}/auth/password`, { method: 'POST', body: JSON.stringify({ password }) }),
   deleteAccount: (id: number) => request<{ ok: boolean }>(`/api/v1/accounts/${id}`, { method: 'DELETE' }),
   discovery: () => request<DiscoveryTask[]>('/api/v1/discovery'),
   createDiscovery: (input: { query: string; sourceType: string }) => request<{ id: number; status: string }>('/api/v1/discovery', { method: 'POST', body: JSON.stringify(input) }),
