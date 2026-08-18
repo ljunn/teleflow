@@ -10,12 +10,24 @@ Teleflow 是面向单一所有者的 Telegram 多账号自动化和私域运营�
 - SQLite WAL、内嵌数据库迁移和基础数据表
 - 健康检查、系统信息、运行概览和 GitHub Release 检查 API
 - 单一管理员初始化、密码登录和会话保护
+- 账号矩阵、采集任务、营销任务和主号中转的持久化管理
+- Telegram 与 Relay Bot 运行能力检测和安全等待状态
 - GitHub Release 检查、校验下载和网页在线升级
 - 前端资源嵌入 Go 二进制
 - GitHub Actions、GoReleaser、GHCR 多架构镜像
 - systemd 服务和一行安装脚本
 
 Telegram 账号登录、Session 加密和机器人消息中转将在后续里程碑实现。首次访问管理端时需要创建管理员密码；这里的管理员登录与 Telegram 账号登录是两个独立流程。
+
+管理端已经提供账号矩阵、采集任务、营销任务和主号中转配置的持久化控制面。真实连接 Telegram 前，需要在 `/etc/teleflow/teleflow.env` 配置：
+
+```bash
+TELEFLOW_TELEGRAM_API_ID=123456
+TELEFLOW_TELEGRAM_API_HASH=your_api_hash
+TELEFLOW_RELAY_BOT_TOKEN=123456:your_bot_token
+```
+
+API ID/hash 需要从 Telegram 的 API development tools 获取，Bot Token 需要从 BotFather 获取。未配置或账号未授权时，系统会明确显示等待连接，并且不会执行采集或发送任务。
 
 ## 在线升级
 

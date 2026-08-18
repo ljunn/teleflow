@@ -10,6 +10,9 @@ services:
       TELEFLOW_DATA_DIR: /var/lib/teleflow
       TELEFLOW_PUBLIC_URL: ${TELEFLOW_PUBLIC_URL:-http://localhost:8080}
       TELEFLOW_GITHUB_REPOSITORY: ${TELEFLOW_GITHUB_REPOSITORY:-ljunn/teleflow}
+      TELEFLOW_TELEGRAM_API_ID: ${TELEFLOW_TELEGRAM_API_ID:-}
+      TELEFLOW_TELEGRAM_API_HASH: ${TELEFLOW_TELEGRAM_API_HASH:-}
+      TELEFLOW_RELAY_BOT_TOKEN: ${TELEFLOW_RELAY_BOT_TOKEN:-}
     volumes:
       - teleflow-data:/var/lib/teleflow
 

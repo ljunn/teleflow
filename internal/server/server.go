@@ -82,7 +82,9 @@ func NewWithRestart(cfg config.Config, db *sql.DB, updateService *updater.Servic
 			SELECT
 				(SELECT COUNT(*) FROM telegram_accounts),
 				(SELECT COUNT(*) FROM telegram_accounts WHERE status = 'online'),
-				(SELECT COUNT(*) FROM jobs WHERE status = 'pending'),
+				(SELECT COUNT(*) FROM jobs WHERE status = 'pending') +
+				(SELECT COUNT(*) FROM discovery_tasks WHERE status IN ('pending_connection', 'ready', 'running')) +
+				(SELECT COUNT(*) FROM campaigns WHERE status IN ('pending_connection', 'ready', 'running')),
 				(SELECT COUNT(*) FROM relay_links WHERE created_at >= datetime('now', 'start of day'))
 		`)
 		if err := row.Scan(&accounts, &online, &pendingJobs, &relayedToday); err != nil {
@@ -96,6 +98,7 @@ func NewWithRestart(cfg config.Config, db *sql.DB, updateService *updater.Servic
 			"relayedToday": relayedToday,
 		})
 	})
+	registerOperationsRoutes(protected, cfg, db)
 
 	webassets.Register(router)
 	return router

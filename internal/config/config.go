@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -13,6 +14,9 @@ type Config struct {
 	DatabasePath     string
 	GitHubRepository string
 	PublicURL        string
+	TelegramAPIID    int
+	TelegramAPIHash  string
+	RelayBotToken    string
 }
 
 func Load() (Config, error) {
@@ -25,12 +29,22 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("create data directory: %w", err)
 	}
 
+	apiID := 0
+	if raw := strings.TrimSpace(os.Getenv("TELEFLOW_TELEGRAM_API_ID")); raw != "" {
+		if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed > 0 {
+			apiID = parsed
+		}
+	}
+
 	return Config{
 		ListenAddress:    env("TELEFLOW_ADDR", ":8080"),
 		DataDirectory:    absDataDir,
 		DatabasePath:     filepath.Join(absDataDir, "teleflow.db"),
 		GitHubRepository: strings.TrimSpace(os.Getenv("TELEFLOW_GITHUB_REPOSITORY")),
 		PublicURL:        strings.TrimRight(env("TELEFLOW_PUBLIC_URL", "http://localhost:8080"), "/"),
+		TelegramAPIID:    apiID,
+		TelegramAPIHash:  strings.TrimSpace(os.Getenv("TELEFLOW_TELEGRAM_API_HASH")),
+		RelayBotToken:    strings.TrimSpace(os.Getenv("TELEFLOW_RELAY_BOT_TOKEN")),
 	}, nil
 }
 

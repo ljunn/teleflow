@@ -33,6 +33,52 @@ export interface UpdateResult {
   updated: boolean
 }
 
+export interface Capabilities {
+  telegramConfigured: boolean
+  relayBotConfigured: boolean
+  connectedAccounts: number
+}
+
+export interface TelegramAccount {
+  id: number
+  phone: string
+  displayName: string
+  status: string
+  lastSeenAt?: string
+  createdAt: string
+}
+
+export interface DiscoveryTask {
+  id: number
+  query: string
+  sourceType: string
+  status: string
+  resultCount: number
+  lastError: string
+  createdAt: string
+}
+
+export interface Campaign {
+  id: number
+  name: string
+  kind: string
+  target: string
+  message: string
+  status: string
+  runAt?: string
+  sentCount: number
+  failedCount: number
+  lastError: string
+  createdAt: string
+}
+
+export interface RelaySettings {
+  botUsername: string
+  masterUsername: string
+  enabled: boolean
+  updatedAt?: string
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -52,6 +98,19 @@ export const api = {
   logout: () => request<{ ok: boolean }>('/api/v1/auth/logout', { method: 'POST' }),
   systemInfo: () => request<SystemInfo>('/api/v1/system/info'),
   overview: () => request<Overview>('/api/v1/overview'),
+  capabilities: () => request<Capabilities>('/api/v1/capabilities'),
+  accounts: () => request<TelegramAccount[]>('/api/v1/accounts'),
+  createAccount: (input: { phone: string; displayName: string }) => request<{ id: number; status: string }>('/api/v1/accounts', { method: 'POST', body: JSON.stringify(input) }),
+  deleteAccount: (id: number) => request<{ ok: boolean }>(`/api/v1/accounts/${id}`, { method: 'DELETE' }),
+  discovery: () => request<DiscoveryTask[]>('/api/v1/discovery'),
+  createDiscovery: (input: { query: string; sourceType: string }) => request<{ id: number; status: string }>('/api/v1/discovery', { method: 'POST', body: JSON.stringify(input) }),
+  deleteDiscovery: (id: number) => request<{ ok: boolean }>(`/api/v1/discovery/${id}`, { method: 'DELETE' }),
+  campaigns: () => request<Campaign[]>('/api/v1/campaigns'),
+  createCampaign: (input: { name: string; kind: string; target: string; message: string; runAt: string }) => request<{ id: number; status: string }>('/api/v1/campaigns', { method: 'POST', body: JSON.stringify(input) }),
+  updateCampaignStatus: (id: number, status: string) => request<{ ok: boolean; status: string }>(`/api/v1/campaigns/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  deleteCampaign: (id: number) => request<{ ok: boolean }>(`/api/v1/campaigns/${id}`, { method: 'DELETE' }),
+  relay: () => request<RelaySettings>('/api/v1/relay'),
+  updateRelay: (input: RelaySettings) => request<{ ok: boolean }>('/api/v1/relay', { method: 'PUT', body: JSON.stringify(input) }),
   checkUpdate: () => request<ReleaseInfo>('/api/v1/system/update/check'),
   applyUpdate: () => request<UpdateResult>('/api/v1/system/update', { method: 'POST' }),
 }
