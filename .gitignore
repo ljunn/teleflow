@@ -1,0 +1,15 @@
+/data/
+/dist/
+/web/dist/
+/node_modules/
+/web/node_modules/
+/output/
+/.playwright-cli/
+/assets/
+/index.html
+/playwright-cli.json
+/.idea/
+/.vscode/
+*.log
+.env
+.DS_Store

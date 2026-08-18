@@ -1,0 +1,17 @@
+services:
+  teleflow:
+    image: ghcr.io/${TELEFLOW_IMAGE_REPOSITORY:-ljunn/teleflow}:${TELEFLOW_VERSION:-latest}
+    container_name: teleflow
+    restart: unless-stopped
+    ports:
+      - "${TELEFLOW_PORT:-8080}:8080"
+    environment:
+      TELEFLOW_ADDR: :8080
+      TELEFLOW_DATA_DIR: /var/lib/teleflow
+      TELEFLOW_PUBLIC_URL: ${TELEFLOW_PUBLIC_URL:-http://localhost:8080}
+      TELEFLOW_GITHUB_REPOSITORY: ${TELEFLOW_GITHUB_REPOSITORY:-ljunn/teleflow}
+    volumes:
+      - teleflow-data:/var/lib/teleflow
+
+volumes:
+  teleflow-data:

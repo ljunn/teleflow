@@ -1,0 +1,25 @@
+[Unit]
+Description=Teleflow Telegram automation service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=teleflow
+Group=teleflow
+WorkingDirectory=/var/lib/teleflow
+EnvironmentFile=-/etc/teleflow/teleflow.env
+ExecStart=/opt/teleflow/teleflow
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/teleflow
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
