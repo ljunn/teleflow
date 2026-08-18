@@ -90,6 +90,13 @@ func TestUpdateDownloadsVerifiesAndReplacesExecutable(t *testing.T) {
 	if string(contents) != "new-binary" {
 		t.Fatalf("unexpected executable contents: %q", contents)
 	}
+	previous, err := os.ReadFile(executablePath + ".previous")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(previous) != "old-binary" {
+		t.Fatalf("unexpected previous executable contents: %q", previous)
+	}
 	info, err := os.Stat(executablePath)
 	if err != nil {
 		t.Fatal(err)

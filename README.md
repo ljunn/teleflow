@@ -19,7 +19,7 @@ Telegram 账号登录、Session 加密和机器人消息中转将在后续里程
 
 ## 在线升级
 
-使用 `deploy/install.sh` 安装的 systemd 实例可以在管理端检查并安装 GitHub Release。升级器会下载当前系统和架构对应的压缩包，使用 `checksums.txt` 完成 SHA-256 校验，原子替换二进制并退出，由 systemd 自动拉起新版本。
+使用 `deploy/install.sh` 安装的 systemd 实例可以在管理端检查并安装 GitHub Release。升级器会下载当前系统和架构对应的压缩包，使用 `checksums.txt` 完成 SHA-256 校验，保留上一版二进制为 `/opt/teleflow/teleflow.previous`，原子替换当前二进制并退出，由 systemd 自动拉起新版本。
 
 从不含在线升级功能的早期版本迁移时，需要先重新执行一次安装脚本，以更新二进制目录权限和 systemd 沙箱配置；此后的版本可以直接从网页升级。容器部署应继续通过拉取新镜像升级，不在容器内替换二进制。
 

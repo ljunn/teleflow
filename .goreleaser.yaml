@@ -35,6 +35,7 @@ archives:
         formats: [zip]
     files:
       - README.md
+      - CHANGELOG.md
       - LICENSE
       - src: deploy/teleflow.service
         dst: .

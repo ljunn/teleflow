@@ -304,17 +304,46 @@ func installArchive(archivePath, executablePath string) error {
 		found = true
 		break
 	}
-	if err := tempFile.Close(); err != nil {
-		return fmt.Errorf("close replacement executable: %w", err)
-	}
 	if !found {
 		return errors.New("release archive does not contain teleflow executable")
+	}
+	if err := tempFile.Sync(); err != nil {
+		return fmt.Errorf("sync replacement executable: %w", err)
+	}
+	if err := tempFile.Close(); err != nil {
+		return fmt.Errorf("close replacement executable: %w", err)
 	}
 	if err := os.Chmod(tempPath, 0o755); err != nil {
 		return fmt.Errorf("set replacement executable permissions: %w", err)
 	}
+	if err := preserveExecutable(executablePath); err != nil {
+		return err
+	}
 	if err := os.Rename(tempPath, executablePath); err != nil {
 		return fmt.Errorf("replace current executable: %w", err)
+	}
+	return nil
+}
+
+func preserveExecutable(executablePath string) error {
+	directory := filepath.Dir(executablePath)
+	placeholder, err := os.CreateTemp(directory, ".teleflow-previous-")
+	if err != nil {
+		return fmt.Errorf("prepare previous executable: %w", err)
+	}
+	previousTempPath := placeholder.Name()
+	if err := placeholder.Close(); err != nil {
+		return fmt.Errorf("close previous executable placeholder: %w", err)
+	}
+	if err := os.Remove(previousTempPath); err != nil {
+		return fmt.Errorf("remove previous executable placeholder: %w", err)
+	}
+	defer os.Remove(previousTempPath)
+	if err := os.Link(executablePath, previousTempPath); err != nil {
+		return fmt.Errorf("preserve current executable: %w", err)
+	}
+	if err := os.Rename(previousTempPath, executablePath+".previous"); err != nil {
+		return fmt.Errorf("store previous executable: %w", err)
 	}
 	return nil
 }
