@@ -1,11 +1,13 @@
-FROM node:22-alpine AS web
+# syntax=docker/dockerfile:1.7
+
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.26-alpine AS backend
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS backend
 WORKDIR /src
 RUN apk add --no-cache ca-certificates git
 COPY go.mod go.sum ./
@@ -15,7 +17,9 @@ COPY --from=web /src/internal/web/dist/ ./internal/web/dist/
 ARG VERSION=dev
 ARG COMMIT=none
 ARG BUILD_DATE=unknown
-RUN CGO_ENABLED=0 go build -trimpath \
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
     -ldflags="-s -w -X github.com/ljunn/teleflow/internal/version.Version=${VERSION} -X github.com/ljunn/teleflow/internal/version.Commit=${COMMIT} -X github.com/ljunn/teleflow/internal/version.BuildDate=${BUILD_DATE}" \
     -o /out/teleflow ./cmd/teleflow
 

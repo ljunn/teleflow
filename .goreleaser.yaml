@@ -21,9 +21,9 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/teleflow/teleflow/internal/version.Version={{ .Version }}
-      - -X github.com/teleflow/teleflow/internal/version.Commit={{ .Commit }}
-      - -X github.com/teleflow/teleflow/internal/version.BuildDate={{ .Date }}
+      - -X github.com/ljunn/teleflow/internal/version.Version={{ .Version }}
+      - -X github.com/ljunn/teleflow/internal/version.Commit={{ .Commit }}
+      - -X github.com/ljunn/teleflow/internal/version.BuildDate={{ .Date }}
 
 archives:
   - id: teleflow

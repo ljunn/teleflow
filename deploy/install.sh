@@ -68,7 +68,8 @@ EOF
 fi
 
 systemctl daemon-reload
-systemctl enable --now teleflow
+systemctl enable teleflow
+systemctl restart teleflow
 
 echo "Teleflow ${VERSION} 已安装。"
 echo "访问地址：http://服务器IP:8080"
