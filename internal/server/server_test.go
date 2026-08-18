@@ -38,4 +38,11 @@ func TestHealthAndSystemInfo(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "<html") {
 		t.Fatalf("frontend returned %d: %s", response.Code, response.Body.String())
 	}
+
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/system/update", nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("update without repository returned %d: %s", response.Code, response.Body.String())
+	}
 }

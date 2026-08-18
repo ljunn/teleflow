@@ -23,8 +23,21 @@ export interface ReleaseInfo {
   notes?: string
 }
 
-async function get<T>(path: string): Promise<T> {
-  const response = await fetch(path, { headers: { Accept: 'application/json' } })
+export interface AuthStatus {
+  configured: boolean
+  authenticated: boolean
+}
+
+export interface UpdateResult {
+  release: ReleaseInfo
+  updated: boolean
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, {
+    ...init,
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...init?.headers },
+  })
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { error?: string } | null
     throw new Error(body?.error || `请求失败（${response.status}）`)
@@ -33,7 +46,12 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export const api = {
-  systemInfo: () => get<SystemInfo>('/api/v1/system/info'),
-  overview: () => get<Overview>('/api/v1/overview'),
-  checkUpdate: () => get<ReleaseInfo>('/api/v1/system/update/check'),
+  authStatus: () => request<AuthStatus>('/api/v1/auth/status'),
+  setup: (password: string) => request<{ ok: boolean }>('/api/v1/auth/setup', { method: 'POST', body: JSON.stringify({ password }) }),
+  login: (password: string) => request<{ ok: boolean }>('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ password }) }),
+  logout: () => request<{ ok: boolean }>('/api/v1/auth/logout', { method: 'POST' }),
+  systemInfo: () => request<SystemInfo>('/api/v1/system/info'),
+  overview: () => request<Overview>('/api/v1/overview'),
+  checkUpdate: () => request<ReleaseInfo>('/api/v1/system/update/check'),
+  applyUpdate: () => request<UpdateResult>('/api/v1/system/update', { method: 'POST' }),
 }

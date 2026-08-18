@@ -15,6 +15,10 @@ import (
 )
 
 func New(cfg config.Config, db *sql.DB, updateService *updater.Service, logger *slog.Logger) http.Handler {
+	return NewWithRestart(cfg, db, updateService, logger, func() {})
+}
+
+func NewWithRestart(cfg config.Config, db *sql.DB, updateService *updater.Service, logger *slog.Logger, restart func()) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery(), requestLogger(logger))
@@ -31,7 +35,15 @@ func New(cfg config.Config, db *sql.DB, updateService *updater.Service, logger *
 	})
 
 	api := router.Group("/api/v1")
-	api.GET("/system/info", func(c *gin.Context) {
+	auth := newAuthService(db)
+	api.GET("/auth/status", auth.status)
+	api.POST("/auth/setup", auth.setup)
+	api.POST("/auth/login", auth.login)
+	api.POST("/auth/logout", auth.logout)
+
+	protected := api.Group("")
+	protected.Use(auth.middleware())
+	protected.GET("/system/info", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"name":      "Teleflow",
 			"version":   version.Version,
@@ -40,7 +52,7 @@ func New(cfg config.Config, db *sql.DB, updateService *updater.Service, logger *
 			"publicUrl": cfg.PublicURL,
 		})
 	})
-	api.GET("/system/update/check", func(c *gin.Context) {
+	protected.GET("/system/update/check", func(c *gin.Context) {
 		release, err := updateService.Check(c.Request.Context())
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
@@ -48,7 +60,23 @@ func New(cfg config.Config, db *sql.DB, updateService *updater.Service, logger *
 		}
 		c.JSON(http.StatusOK, release)
 	})
-	api.GET("/overview", func(c *gin.Context) {
+	protected.POST("/system/update", func(c *gin.Context) {
+		result, err := updateService.Update(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+		if !result.Updated {
+			c.JSON(http.StatusConflict, gin.H{"error": "当前没有可用的新版本", "release": result.Release})
+			return
+		}
+		c.JSON(http.StatusOK, result)
+		go func() {
+			time.Sleep(750 * time.Millisecond)
+			restart()
+		}()
+	})
+	protected.GET("/overview", func(c *gin.Context) {
 		var accounts, online, pendingJobs, relayedToday int
 		row := db.QueryRowContext(c.Request.Context(), `
 			SELECT

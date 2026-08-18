@@ -45,7 +45,7 @@ func main() {
 
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddress,
-		Handler:           server.New(cfg, db, updateService, logger),
+		Handler:           server.NewWithRestart(cfg, db, updateService, logger, func() { os.Exit(0) }),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

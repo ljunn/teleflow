@@ -9,11 +9,19 @@ Teleflow 是面向单一所有者的 Telegram 多账号自动化和私域运营�
 - Go 单体服务和 Vue 3 中文管理端
 - SQLite WAL、内嵌数据库迁移和基础数据表
 - 健康检查、系统信息、运行概览和 GitHub Release 检查 API
+- 单一管理员初始化、密码登录和会话保护
+- GitHub Release 检查、校验下载和网页在线升级
 - 前端资源嵌入 Go 二进制
 - GitHub Actions、GoReleaser、GHCR 多架构镜像
 - systemd 服务和一行安装脚本
 
-Telegram 账号登录、Session 加密、机器人消息中转和二进制应用升级将在后续里程碑实现。
+Telegram 账号登录、Session 加密和机器人消息中转将在后续里程碑实现。首次访问管理端时需要创建管理员密码；这里的管理员登录与 Telegram 账号登录是两个独立流程。
+
+## 在线升级
+
+使用 `deploy/install.sh` 安装的 systemd 实例可以在管理端检查并安装 GitHub Release。升级器会下载当前系统和架构对应的压缩包，使用 `checksums.txt` 完成 SHA-256 校验，原子替换二进制并退出，由 systemd 自动拉起新版本。
+
+从不含在线升级功能的早期版本迁移时，需要先重新执行一次安装脚本，以更新二进制目录权限和 systemd 沙箱配置；此后的版本可以直接从网页升级。容器部署应继续通过拉取新镜像升级，不在容器内替换二进制。
 
 ## 本地开发
 

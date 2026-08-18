@@ -10,6 +10,7 @@
 /playwright-cli.json
 /.idea/
 /.vscode/
+.agent/
 *.log
 .env
 .DS_Store

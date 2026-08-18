@@ -17,7 +17,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/teleflow
+ReadWritePaths=/var/lib/teleflow /opt/teleflow
 LockPersonality=true
 RestrictSUIDSGID=true
 

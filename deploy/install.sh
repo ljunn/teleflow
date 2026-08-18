@@ -52,9 +52,10 @@ echo "${EXPECTED}  ${TEMP_DIR}/${ARCHIVE}" | sha256sum --check --status
 
 tar -xzf "${TEMP_DIR}/${ARCHIVE}" -C "${TEMP_DIR}" teleflow teleflow.service
 id teleflow >/dev/null 2>&1 || useradd --system --home-dir "${DATA_DIR}" --shell /usr/sbin/nologin teleflow
-install -d -m 0755 "${INSTALL_DIR}" "${CONFIG_DIR}"
+install -d -o teleflow -g teleflow -m 0755 "${INSTALL_DIR}"
+install -d -m 0755 "${CONFIG_DIR}"
 install -d -o teleflow -g teleflow -m 0750 "${DATA_DIR}"
-install -m 0755 "${TEMP_DIR}/teleflow" "${INSTALL_DIR}/teleflow"
+install -o teleflow -g teleflow -m 0755 "${TEMP_DIR}/teleflow" "${INSTALL_DIR}/teleflow"
 install -m 0644 "${TEMP_DIR}/teleflow.service" /etc/systemd/system/teleflow.service
 
 if [[ ! -f "${CONFIG_DIR}/teleflow.env" ]]; then
