@@ -26,7 +26,7 @@ func TestOperationsFlow(t *testing.T) {
 		updater.New(updater.Options{Current: "dev"}),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
-	setup := serveJSON(handler, http.MethodPost, "/api/v1/auth/setup", `{"password":"admin1234"}`, nil)
+	setup := serveJSON(handler, http.MethodPost, "/api/v1/auth/setup", `{"password":"admin"}`, nil)
 	if setup.Code != http.StatusOK {
 		t.Fatalf("setup returned %d: %s", setup.Code, setup.Body.String())
 	}

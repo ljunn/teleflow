@@ -26,6 +26,7 @@ export interface ReleaseInfo {
 export interface AuthStatus {
   configured: boolean
   authenticated: boolean
+  defaultPassword: string
 }
 
 export interface UpdateResult {
@@ -98,6 +99,7 @@ export const api = {
   authStatus: () => request<AuthStatus>('/api/v1/auth/status'),
   setup: (password: string) => request<{ ok: boolean }>('/api/v1/auth/setup', { method: 'POST', body: JSON.stringify({ password }) }),
   login: (password: string) => request<{ ok: boolean }>('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ password }) }),
+  changePassword: (input: { currentPassword: string; newPassword: string; confirmPassword: string }) => request<{ ok: boolean }>('/api/v1/auth/password', { method: 'POST', body: JSON.stringify(input) }),
   logout: () => request<{ ok: boolean }>('/api/v1/auth/logout', { method: 'POST' }),
   systemInfo: () => request<SystemInfo>('/api/v1/system/info'),
   overview: () => request<Overview>('/api/v1/overview'),

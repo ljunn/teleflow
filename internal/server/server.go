@@ -43,6 +43,7 @@ func NewWithRestart(cfg config.Config, db *sql.DB, updateService *updater.Servic
 
 	protected := api.Group("")
 	protected.Use(auth.middleware())
+	protected.POST("/auth/password", auth.changePassword)
 	protected.GET("/system/info", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"name":      "Teleflow",

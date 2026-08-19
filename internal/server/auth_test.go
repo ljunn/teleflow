@@ -25,11 +25,16 @@ func TestAuthenticationFlow(t *testing.T) {
 	handler := testHandler(db)
 
 	response := serveJSON(handler, http.MethodGet, "/api/v1/auth/status", "", nil)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"configured":false`) {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"configured":false`) || !strings.Contains(response.Body.String(), `"defaultPassword":"admin"`) {
 		t.Fatalf("initial status returned %d: %s", response.Code, response.Body.String())
 	}
 
-	response = serveJSON(handler, http.MethodPost, "/api/v1/auth/setup", `{"password":"admin1234"}`, nil)
+	response = serveJSON(handler, http.MethodPost, "/api/v1/auth/setup", `{"password":"not-admin"}`, nil)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("custom setup password returned %d: %s", response.Code, response.Body.String())
+	}
+
+	response = serveJSON(handler, http.MethodPost, "/api/v1/auth/setup", `{"password":"admin"}`, nil)
 	if response.Code != http.StatusOK || len(response.Result().Cookies()) != 1 {
 		t.Fatalf("setup returned %d: %s", response.Code, response.Body.String())
 	}
@@ -61,12 +66,30 @@ func TestAuthenticationFlow(t *testing.T) {
 		t.Fatalf("wrong password returned %d: %s", response.Code, response.Body.String())
 	}
 
-	response = serveJSON(handler, http.MethodPost, "/api/v1/auth/login", `{"password":"admin1234"}`, nil)
+	response = serveJSON(handler, http.MethodPost, "/api/v1/auth/login", `{"password":"admin"}`, nil)
 	if response.Code != http.StatusOK || len(response.Result().Cookies()) != 1 {
 		t.Fatalf("login returned %d: %s", response.Code, response.Body.String())
 	}
 
 	loginSession := response.Result().Cookies()[0]
+	response = serveJSON(handler, http.MethodPost, "/api/v1/auth/password", `{"currentPassword":"incorrect","newPassword":"new-admin-password","confirmPassword":"new-admin-password"}`, loginSession)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong current password returned %d: %s", response.Code, response.Body.String())
+	}
+	response = serveJSON(handler, http.MethodPost, "/api/v1/auth/password", `{"currentPassword":"admin","newPassword":"new-admin-password","confirmPassword":"new-admin-password"}`, loginSession)
+	if response.Code != http.StatusOK || len(response.Result().Cookies()) != 1 {
+		t.Fatalf("change password returned %d: %s", response.Code, response.Body.String())
+	}
+	loginSession = response.Result().Cookies()[0]
+	response = serveJSON(handler, http.MethodPost, "/api/v1/auth/login", `{"password":"admin"}`, nil)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("old password returned %d: %s", response.Code, response.Body.String())
+	}
+	response = serveJSON(handler, http.MethodPost, "/api/v1/auth/login", `{"password":"new-admin-password"}`, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("new password returned %d: %s", response.Code, response.Body.String())
+	}
+
 	response = serveJSON(handler, http.MethodPost, "/api/v1/auth/logout", "", loginSession)
 	if response.Code != http.StatusOK {
 		t.Fatalf("logout returned %d: %s", response.Code, response.Body.String())

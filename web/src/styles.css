@@ -34,6 +34,9 @@ button { letter-spacing: 0; }
 .password-field button { position: absolute; top: 3px; right: 3px; width: 38px; height: 38px; border: 0; background: transparent; color: #65717c; display: grid; place-items: center; cursor: pointer; }
 .auth-error { margin: 4px 0 0; color: #a43125; font-size: 13px; }
 .auth-submit { margin-top: 12px; }
+.default-password { margin: 8px 0 2px; padding: 15px 16px; border: 1px solid #bddfd2; border-radius: 6px; background: #f2faf7; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.default-password span { color: #53635e; font-size: 13px; }
+.default-password strong { color: #087356; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 18px; }
 
 .shell { min-height: 100vh; display: grid; grid-template-columns: 224px minmax(0, 1fr); }
 .sidebar { position: sticky; top: 0; z-index: 10; height: 100vh; padding: 22px 14px; background: #151a20; color: #d9dee4; display: flex; flex-direction: column; }
@@ -144,6 +147,12 @@ td.account-actions { display: flex; justify-content: flex-end; align-items: cent
 .relay-flow strong { font-size: 13px; }
 .relay-flow p { margin: 4px 0 0; color: #75808a; font-size: 12px; line-height: 1.5; }
 .settings-grid { margin-top: 0; }
+.password-settings { display: flex; flex-direction: column; gap: 18px; }
+.password-settings-fields { display: grid; gap: 12px; }
+.password-settings-fields label { display: grid; gap: 7px; color: #48525c; font-size: 13px; font-weight: 600; }
+.password-settings-fields input { width: 100%; height: 42px; padding: 0 12px; border: 1px solid #cfd5da; border-radius: 6px; color: #17202a; background: #fff; outline: none; }
+.password-settings-fields input:focus { border-color: #087f5b; box-shadow: 0 0 0 3px rgba(8, 127, 91, .12); }
+.password-settings .primary { margin-top: auto; align-self: flex-start; }
 .spinning { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 

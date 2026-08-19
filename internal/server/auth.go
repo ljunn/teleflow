@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -22,6 +23,7 @@ const (
 	expiresSetting  = "admin_session_expires"
 	sessionCookie   = "teleflow_session"
 	sessionTTL      = 24 * time.Hour
+	defaultPassword = "admin"
 )
 
 type authService struct {
@@ -53,6 +55,12 @@ func (a *authService) status(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"configured":    configured,
 		"authenticated": a.authenticated(c),
+		"defaultPassword": func() string {
+			if !configured {
+				return defaultPassword
+			}
+			return ""
+		}(),
 	})
 }
 
@@ -69,11 +77,15 @@ func (a *authService) setup(c *gin.Context) {
 	var input struct {
 		Password string `json:"password"`
 	}
-	if err := c.ShouldBindJSON(&input); err != nil || len([]rune(input.Password)) < 8 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "密码至少需要 8 个字符"})
+	if err := c.ShouldBindJSON(&input); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "初始化请求无效"})
 		return
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+	if strings.TrimSpace(input.Password) != "" && input.Password != defaultPassword {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "首次初始化默认密码为 admin"})
+		return
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(defaultPassword), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "设置密码失败"})
 		return
@@ -89,6 +101,60 @@ func (a *authService) setup(c *gin.Context) {
 	}
 	if err := a.issueSession(c); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建登录会话失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (a *authService) changePassword(c *gin.Context) {
+	var input struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+		ConfirmPassword string `json:"confirmPassword"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请输入完整的密码信息"})
+		return
+	}
+	if len([]rune(input.NewPassword)) < 8 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "新密码至少需要 8 个字符"})
+		return
+	}
+	if len([]byte(input.NewPassword)) > 72 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "新密码不能超过 72 个字节"})
+		return
+	}
+	if input.NewPassword != input.ConfirmPassword {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "两次输入的新密码不一致"})
+		return
+	}
+	if input.CurrentPassword == input.NewPassword {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "新密码不能与当前密码相同"})
+		return
+	}
+
+	var hash string
+	if err := a.db.QueryRowContext(c.Request.Context(), "SELECT value FROM settings WHERE key = ?", passwordSetting).Scan(&hash); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取认证配置失败"})
+		return
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(input.CurrentPassword)) != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "当前密码错误"})
+		return
+	}
+	newHash, err := bcrypt.GenerateFromPassword([]byte(input.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成新密码失败"})
+		return
+	}
+	if _, err := a.db.ExecContext(c.Request.Context(), `
+		UPDATE settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?
+	`, string(newHash), passwordSetting); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存新密码失败"})
+		return
+	}
+	if err := a.issueSession(c); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "刷新登录会话失败"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})

@@ -52,7 +52,6 @@ const auth = ref<AuthStatus | null>(null)
 const authLoading = ref(true)
 const authSubmitting = ref(false)
 const password = ref('')
-const confirmPassword = ref('')
 const showPassword = ref(false)
 const authError = ref('')
 const info = ref<SystemInfo | null>(null)
@@ -77,6 +76,8 @@ const telegramCode = ref('')
 const telegramPassword = ref('')
 const discoveryForm = ref({ query: '', sourceType: 'public_chat' })
 const campaignForm = ref({ name: '', kind: 'direct_message', target: '', message: '', runAt: '' })
+const passwordForm = ref({ currentPassword: '', newPassword: '', confirmPassword: '' })
+const passwordChanging = ref(false)
 
 const versionText = computed(() => info.value?.version || 'dev')
 const page = computed(() => sections.find((item) => item.id === activeSection.value) || sections[0])
@@ -133,17 +134,12 @@ async function bootstrap() {
 
 async function submitAuth() {
   authError.value = ''
-  if (!auth.value?.configured && password.value !== confirmPassword.value) {
-    authError.value = '两次输入的密码不一致'
-    return
-  }
   authSubmitting.value = true
   try {
     if (auth.value?.configured) await api.login(password.value)
-    else await api.setup(password.value)
-    auth.value = { configured: true, authenticated: true }
+    else await api.setup(auth.value?.defaultPassword || 'admin')
+    auth.value = { configured: true, authenticated: true, defaultPassword: '' }
     password.value = ''
-    confirmPassword.value = ''
     await loadAll()
   } catch (err) {
     authError.value = messageFrom(err, '操作失败')
@@ -156,9 +152,27 @@ async function logout() {
   try {
     await api.logout()
   } finally {
-    auth.value = { configured: true, authenticated: false }
+    auth.value = { configured: true, authenticated: false, defaultPassword: '' }
     info.value = null
     overview.value = null
+  }
+}
+
+async function changeAdminPassword() {
+  clearNotices()
+  if (passwordForm.value.newPassword !== passwordForm.value.confirmPassword) {
+    error.value = '两次输入的新密码不一致'
+    return
+  }
+  passwordChanging.value = true
+  try {
+    await api.changePassword(passwordForm.value)
+    passwordForm.value = { currentPassword: '', newPassword: '', confirmPassword: '' }
+    success.value = '管理员密码已更新。'
+  } catch (err) {
+    error.value = messageFrom(err, '修改密码失败')
+  } finally {
+    passwordChanging.value = false
   }
 }
 
@@ -412,20 +426,19 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncSection))
   <main v-else-if="!auth?.authenticated" class="auth-page">
     <section class="auth-copy">
       <div class="auth-brand"><Bot :size="28" /><span>Teleflow</span></div>
-      <div><p class="auth-kicker">私域运营控制台</p><h1>{{ auth?.configured ? '欢迎回来' : '初始化管理员' }}</h1><p>{{ auth?.configured ? '登录后管理账号矩阵、营销任务与消息中转。' : '设置管理员密码，保护此实例中的账号和运营数据。' }}</p></div>
+      <div><p class="auth-kicker">私域运营控制台</p><h1>{{ auth?.configured ? '欢迎回来' : '初始化管理员' }}</h1><p>{{ auth?.configured ? '登录后管理账号矩阵、营销任务与消息中转。' : '使用默认管理员密码进入系统，登录后可在系统设置中修改。' }}</p></div>
       <small>单一所有者模式 · 本地数据存储</small>
     </section>
     <section class="auth-form-wrap">
       <form class="auth-form" @submit.prevent="submitAuth">
-        <div class="form-heading"><LockKeyhole :size="21" /><div><h2>{{ auth?.configured ? '管理员登录' : '创建管理员密码' }}</h2><p>{{ auth?.configured ? '请输入当前实例的管理员密码' : '密码至少需要 8 个字符' }}</p></div></div>
-        <label for="password">管理员密码</label>
-        <div class="password-field">
-          <input id="password" v-model="password" :type="showPassword ? 'text' : 'password'" :autocomplete="auth?.configured ? 'current-password' : 'new-password'" minlength="8" required autofocus />
+        <div class="form-heading"><LockKeyhole :size="21" /><div><h2>{{ auth?.configured ? '管理员登录' : '首次登录' }}</h2><p>{{ auth?.configured ? '请输入当前实例的管理员密码' : '登录后请及时修改默认密码' }}</p></div></div>
+        <template v-if="auth?.configured"><label for="password">管理员密码</label><div class="password-field">
+          <input id="password" v-model="password" :type="showPassword ? 'text' : 'password'" autocomplete="current-password" required autofocus />
           <button type="button" :title="showPassword ? '隐藏密码' : '显示密码'" :aria-label="showPassword ? '隐藏密码' : '显示密码'" @click="showPassword = !showPassword"><EyeOff v-if="showPassword" :size="18" /><Eye v-else :size="18" /></button>
-        </div>
-        <template v-if="!auth?.configured"><label for="confirm-password">确认密码</label><input id="confirm-password" v-model="confirmPassword" :type="showPassword ? 'text' : 'password'" autocomplete="new-password" minlength="8" required /></template>
+        </div></template>
+        <div v-else class="default-password"><span>默认管理员密码</span><strong>{{ auth?.defaultPassword || 'admin' }}</strong></div>
         <p v-if="authError" class="auth-error">{{ authError }}</p>
-        <button class="primary auth-submit" :disabled="authSubmitting" type="submit"><RefreshCw v-if="authSubmitting" :size="17" class="spinning" /><LockKeyhole v-else :size="17" />{{ authSubmitting ? '请稍候' : auth?.configured ? '登录' : '完成初始化' }}</button>
+        <button class="primary auth-submit" :disabled="authSubmitting" type="submit"><RefreshCw v-if="authSubmitting" :size="17" class="spinning" /><LockKeyhole v-else :size="17" />{{ authSubmitting ? '请稍候' : auth?.configured ? '登录' : '使用默认密码进入' }}</button>
       </form>
     </section>
   </main>
@@ -484,6 +497,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncSection))
       <section v-else class="content-grid settings-grid">
         <div class="panel"><div class="panel-title"><div><h2>服务状态</h2><p>当前实例的基础运行状态</p></div><CheckCircle2 :size="20" /></div><dl><div><dt>应用版本</dt><dd>{{ versionText }}</dd></div><div><dt>构建提交</dt><dd class="hash">{{ info?.commit || 'none' }}</dd></div><div><dt>公开地址</dt><dd class="hash">{{ info?.publicUrl || '-' }}</dd></div><div><dt>数据库</dt><dd>SQLite WAL</dd></div></dl></div>
         <div class="panel update-panel"><div class="panel-title"><div><h2>版本升级</h2><p>从 GitHub Releases 获取稳定版本</p></div><ShieldCheck :size="20" /></div><div v-if="!release" class="update-empty"><Download :size="28" /><p>检查是否有可用的新版本</p></div><div v-else class="release-result"><strong v-if="!release.configured">尚未配置 GitHub 仓库</strong><strong v-else-if="release.available">发现新版本 {{ release.latestVersion }}</strong><strong v-else>当前已是最新版本</strong><a v-if="release.releaseUrl" :href="release.releaseUrl" target="_blank" rel="noreferrer">查看发布说明</a><span v-if="updateMessage" class="update-message">{{ updateMessage }}</span></div><button v-if="release?.available" class="primary" :disabled="updating || !!updateMessage" @click="applyUpdate"><RefreshCw :size="17" :class="{ spinning: updating }" />{{ updateMessage ? '正在重启' : updating ? '正在升级' : '立即升级' }}</button><button v-else class="primary" :disabled="checking" @click="checkUpdate"><RefreshCw :size="17" :class="{ spinning: checking }" />{{ checking ? '正在检查' : '检查更新' }}</button></div>
+        <form class="panel password-settings" @submit.prevent="changeAdminPassword"><div class="panel-title"><div><h2>管理员密码</h2><p>更新此实例的登录凭据</p></div><LockKeyhole :size="20" /></div><div class="password-settings-fields"><label>当前密码<input v-model="passwordForm.currentPassword" type="password" autocomplete="current-password" required /></label><label>新密码<input v-model="passwordForm.newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required /></label><label>确认新密码<input v-model="passwordForm.confirmPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required /></label></div><button class="primary" :disabled="passwordChanging" type="submit"><RefreshCw v-if="passwordChanging" :size="17" class="spinning" /><ShieldCheck v-else :size="17" />{{ passwordChanging ? '正在保存' : '修改密码' }}</button></form>
       </section>
     </main>
   </div>
