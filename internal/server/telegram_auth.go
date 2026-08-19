@@ -224,7 +224,8 @@ func (a *gotdAccountAuthorizer) run(ctx context.Context, accountID int64, callba
 }
 
 func (a *gotdAccountAuthorizer) runWithTimeout(ctx context.Context, accountID int64, timeout time.Duration, callback func(context.Context, *telegram.Client) error) error {
-	if a.cfg.TelegramAPIID <= 0 || a.cfg.TelegramAPIHash == "" {
+	credentials := loadTelegramCredentials(ctx, a.db, a.cfg)
+	if !telegramCredentialsConfigured(credentials) {
 		return errTelegramNotConfigured
 	}
 	if len(a.cfg.SessionKey) != 32 {
@@ -238,7 +239,7 @@ func (a *gotdAccountAuthorizer) runWithTimeout(ctx context.Context, accountID in
 
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	client := telegram.NewClient(a.cfg.TelegramAPIID, a.cfg.TelegramAPIHash, telegram.Options{
+	client := telegram.NewClient(credentials.APIID, credentials.APIHash, telegram.Options{
 		SessionStorage: &encryptedSessionStorage{db: a.db, accountID: accountID, key: a.cfg.SessionKey},
 		NoUpdates:      true,
 	})

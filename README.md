@@ -29,7 +29,7 @@ TELEFLOW_TELEGRAM_API_HASH=your_api_hash
 TELEFLOW_RELAY_BOT_TOKEN=123456:your_bot_token
 ```
 
-API ID/hash 需要从 Telegram 的 API development tools 获取，Bot Token 需要从 BotFather 获取。配置 API 后，在账号矩阵中可以按手机号发送验证码并完成可选 2FA；未配置或账号未授权时，系统会明确显示等待连接，并且不会执行采集或发送任务。
+API ID/hash 是 Telegram 为客户端应用签发的凭据，必须由管理员在 <https://my.telegram.org/apps> 创建应用后取得，不能由 Teleflow 自动生成。Bot Token 需要从 BotFather 获取。配置 API 后，批量导入带取码链接的账号会自动排队登录；登录遇到两步验证时会停在 2FA 输入状态。未配置 API 时，导入仍会保存账号，但会明确记录阻塞原因，不再静默显示为“待登录”。
 
 账号矩阵支持每行一个账号的批量清单，例如 `+10000000000----https://vendor.example/code/GetHTML`。也兼容 `|`、Tab、逗号和分号分隔。取码链接使用实例 Session Key 加密保存，账号列表和 API 响应不会返回完整链接。自动登录会从结构化页面字段读取新验证码和可选 2FA，在短暂返回旧码时有界重试；完成后可执行单账号或批量存活检测，区分在线、受限、会话失效、封禁和连接失败。
 

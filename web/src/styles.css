@@ -89,6 +89,7 @@ dd.hash { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 .workspace { display: grid; gap: 16px; }
 .capability-banner { padding: 15px 17px; display: flex; align-items: flex-start; gap: 12px; border-left: 3px solid #2a8c71; background: #f8fbfa; color: #13705a; }
 .capability-banner p { margin: 4px 0 0; color: #65746f; font-size: 12px; line-height: 1.5; }
+.capability-banner a { display: inline-block; margin-top: 7px; color: #087f5b; font-size: 12px; font-weight: 700; }
 .workspace-panel { padding: 20px; min-width: 0; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; align-items: end; }
 .form-grid label { display: grid; gap: 7px; min-width: 0; }
@@ -175,6 +176,11 @@ td.account-actions { display: flex; justify-content: flex-end; align-items: cent
 .relay-flow strong { font-size: 13px; }
 .relay-flow p { margin: 4px 0 0; color: #75808a; font-size: 12px; line-height: 1.5; }
 .settings-grid { margin-top: 0; }
+.telegram-setup-panel { display: flex; flex-direction: column; gap: 14px; }
+.setup-status { display: flex; align-items: center; gap: 10px; color: #34404a; font-size: 13px; }
+.setup-copy { margin: 0; color: #68747e; font-size: 13px; line-height: 1.65; }
+.setup-copy a { color: #087f5b; }
+.setup-copy code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .password-settings { display: flex; flex-direction: column; gap: 18px; }
 .password-settings-fields { display: grid; gap: 12px; }
 .password-settings-fields label { display: grid; gap: 7px; color: #48525c; font-size: 13px; font-weight: 600; }

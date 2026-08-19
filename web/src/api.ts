@@ -40,6 +40,13 @@ export interface Capabilities {
   connectedAccounts: number
 }
 
+export interface TelegramSettings {
+  configured: boolean
+  apiId: number
+  hasApiHash: boolean
+  source: 'environment' | 'saved'
+}
+
 export interface TelegramAccount {
   id: number
   phone: string
@@ -62,6 +69,8 @@ export interface AccountImportResult {
   updated: number
   skipped: number
   errors: Array<{ line: number; error: string }>
+  autoLoginQueued: number
+  autoLoginBlocked: boolean
 }
 
 export interface DiscoveryTask {
@@ -116,6 +125,8 @@ export const api = {
   systemInfo: () => request<SystemInfo>('/api/v1/system/info'),
   overview: () => request<Overview>('/api/v1/overview'),
   capabilities: () => request<Capabilities>('/api/v1/capabilities'),
+  telegramSettings: () => request<TelegramSettings>('/api/v1/telegram/settings'),
+  updateTelegramSettings: (input: { apiId: number; apiHash: string }) => request<{ ok: boolean; configured: boolean }>('/api/v1/telegram/settings', { method: 'PUT', body: JSON.stringify(input) }),
   accounts: () => request<TelegramAccount[]>('/api/v1/accounts'),
   createAccount: (input: { phone: string; displayName: string }) => request<{ id: number; status: string }>('/api/v1/accounts', { method: 'POST', body: JSON.stringify(input) }),
 	importAccounts: (text: string) => request<AccountImportResult>('/api/v1/accounts/import', { method: 'POST', body: JSON.stringify({ text }) }),

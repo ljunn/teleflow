@@ -6,7 +6,9 @@ import (
 	"database/sql"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -83,6 +85,64 @@ func TestAccountAuthorizationRequiresCorrectState(t *testing.T) {
 	assertResponse(t, serveJSON(handler, http.MethodPost, "/api/v1/accounts/1/auth/password", `{"password":"secret"}`, nil), http.StatusConflict, "当前不需要两步验证密码")
 }
 
+func TestImportQueuesAutoLoginWhenTelegramIsConfigured(t *testing.T) {
+	db := openTelegramTestDB(t)
+	authorizer := &fakeAccountAuthorizer{autoResult: accountAuthResult{Status: "authorized", UserID: 7, Username: "imported_user", DisplayName: "Imported User"}}
+	key := bytes.Repeat([]byte{0x2a}, 32)
+	handler := telegramOperationsHandlerWithConfig(db, authorizer, config.Config{TelegramAPIID: 123, TelegramAPIHash: "hash", SessionKey: key})
+
+	response := serveJSON(handler, http.MethodPost, "/api/v1/accounts/import", `{"text":"+8613800138003----https://vendor.example/code"}`, nil)
+	assertResponse(t, response, http.StatusOK, `"autoLoginQueued":1`)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var status string
+		if err := db.QueryRow("SELECT status FROM telegram_accounts WHERE id = 1").Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		if status == "online" {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("imported account did not finish automatic login")
+}
+
+func TestImportExplainsMissingTelegramConfiguration(t *testing.T) {
+	db := openTelegramTestDB(t)
+	handler := telegramOperationsHandlerWithConfig(db, &fakeAccountAuthorizer{}, config.Config{SessionKey: bytes.Repeat([]byte{0x2a}, 32)})
+
+	response := serveJSON(handler, http.MethodPost, "/api/v1/accounts/import", `{"text":"+8613800138004----https://vendor.example/code"}`, nil)
+	assertResponse(t, response, http.StatusOK, `"autoLoginBlocked":true`)
+	var lastError string
+	if err := db.QueryRow("SELECT last_error FROM telegram_accounts WHERE id = 1").Scan(&lastError); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(lastError, "未配置 Telegram API") {
+		t.Fatalf("last_error = %q", lastError)
+	}
+}
+
+func TestSavedTelegramSettingsEnableAutomaticLogin(t *testing.T) {
+	db := openTelegramTestDB(t)
+	authorizer := &fakeAccountAuthorizer{autoResult: accountAuthResult{Status: "authorized", UserID: 8}}
+	cfg := config.Config{SessionKey: bytes.Repeat([]byte{0x2a}, 32)}
+	gin.SetMode(gin.ReleaseMode)
+	router := gin.New()
+	group := router.Group("/api/v1")
+	registerTelegramSettingsRoutes(group, cfg, db)
+	registerOperationsRoutes(group, cfg, db, authorizer)
+
+	assertResponse(t, serveJSON(router, http.MethodPut, "/api/v1/telegram/settings", `{"apiId":123456,"apiHash":"0123456789abcdef0123456789abcdef"}`, nil), http.StatusOK, `"configured":true`)
+	settings := serveJSON(router, http.MethodGet, "/api/v1/telegram/settings", "", nil)
+	assertResponse(t, settings, http.StatusOK, `"apiId":123456`)
+	if strings.Contains(settings.Body.String(), "0123456789abcdef") {
+		t.Fatal("Telegram API Hash was exposed by settings endpoint")
+	}
+	response := serveJSON(router, http.MethodPost, "/api/v1/accounts/import", `{"text":"+8613800138005----https://vendor.example/code"}`, nil)
+	assertResponse(t, response, http.StatusOK, `"autoLoginQueued":1`)
+}
+
 func TestEncryptedSessionStorage(t *testing.T) {
 	db := openTelegramTestDB(t)
 	if _, err := db.Exec("INSERT INTO telegram_accounts(phone) VALUES('+8613800138002')"); err != nil {
@@ -125,10 +185,14 @@ func openTelegramTestDB(t *testing.T) *sql.DB {
 }
 
 func telegramOperationsHandler(db *sql.DB, authorizer accountAuthorizer) http.Handler {
+	return telegramOperationsHandlerWithConfig(db, authorizer, config.Config{})
+}
+
+func telegramOperationsHandlerWithConfig(db *sql.DB, authorizer accountAuthorizer, cfg config.Config) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	group := router.Group("/api/v1")
-	registerOperationsRoutes(group, config.Config{}, db, authorizer)
+	registerOperationsRoutes(group, cfg, db, authorizer)
 	return router
 }
 

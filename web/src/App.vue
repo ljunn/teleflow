@@ -39,6 +39,7 @@ import {
   type ReleaseInfo,
   type SystemInfo,
   type TelegramAccount,
+  type TelegramSettings,
 } from './api'
 
 type Section = 'overview' | 'accounts' | 'discover' | 'campaigns' | 'relay' | 'settings'
@@ -61,6 +62,7 @@ const authError = ref('')
 const info = ref<SystemInfo | null>(null)
 const overview = ref<Overview | null>(null)
 const capabilities = ref<Capabilities | null>(null)
+const telegramSettings = ref<TelegramSettings | null>(null)
 const accounts = ref<TelegramAccount[]>([])
 const discoveryTasks = ref<DiscoveryTask[]>([])
 const campaigns = ref<Campaign[]>([])
@@ -86,6 +88,8 @@ const discoveryForm = ref({ query: '', sourceType: 'public_chat' })
 const campaignForm = ref({ name: '', kind: 'direct_message', target: '', message: '', runAt: '' })
 const passwordForm = ref({ currentPassword: '', newPassword: '', confirmPassword: '' })
 const passwordChanging = ref(false)
+const telegramSettingsForm = ref({ apiId: '', apiHash: '' })
+const telegramSettingsSaving = ref(false)
 
 const versionText = computed(() => info.value?.version || 'dev')
 const page = computed(() => sections.find((item) => item.id === activeSection.value) || sections[0])
@@ -118,12 +122,14 @@ async function loadAll() {
   loading.value = true
   clearNotices()
   try {
-    const [systemInfo, overviewData, capabilityData, accountData, discoveryData, campaignData, relayData] = await Promise.all([
-      api.systemInfo(), api.overview(), api.capabilities(), api.accounts(), api.discovery(), api.campaigns(), api.relay(),
+    const [systemInfo, overviewData, capabilityData, telegramSettingsData, accountData, discoveryData, campaignData, relayData] = await Promise.all([
+      api.systemInfo(), api.overview(), api.capabilities(), api.telegramSettings(), api.accounts(), api.discovery(), api.campaigns(), api.relay(),
     ])
     info.value = systemInfo
     overview.value = overviewData
     capabilities.value = capabilityData
+    telegramSettings.value = telegramSettingsData
+    telegramSettingsForm.value.apiId = telegramSettingsData.apiId > 0 ? String(telegramSettingsData.apiId) : ''
     accounts.value = accountData
     discoveryTasks.value = discoveryData
     campaigns.value = campaignData
@@ -191,6 +197,27 @@ async function changeAdminPassword() {
   }
 }
 
+async function saveTelegramSettings() {
+  telegramSettingsSaving.value = true
+  clearNotices()
+  try {
+    await api.updateTelegramSettings({ apiId: Number(telegramSettingsForm.value.apiId), apiHash: telegramSettingsForm.value.apiHash.trim() })
+    const [settingsData, capabilityData] = await Promise.all([api.telegramSettings(), api.capabilities()])
+    telegramSettings.value = settingsData
+    capabilities.value = capabilityData
+    telegramSettingsForm.value.apiHash = ''
+    const pendingAccounts = accounts.value.filter((item) => item.hasCodeUrl && ['pending', 'error', 'unauthorized', 'flood_wait'].includes(item.status))
+    const started = await Promise.allSettled(pendingAccounts.map((item) => api.autoLoginAccount(item.id)))
+    const startedCount = started.filter((result) => result.status === 'fulfilled').length
+    accounts.value = await api.accounts()
+    success.value = startedCount > 0 ? `Telegram API 配置已保存，并自动开始登录 ${startedCount} 个账号。` : 'Telegram API 配置已保存并立即生效。'
+  } catch (err) {
+    error.value = messageFrom(err, '保存 Telegram API 配置失败')
+  } finally {
+    telegramSettingsSaving.value = false
+  }
+}
+
 async function createAccount() {
   saving.value = 'account'
   clearNotices()
@@ -217,7 +244,13 @@ async function importAccounts() {
 		accountImportText.value = ''
 		accounts.value = await api.accounts()
 		overview.value = await api.overview()
-		success.value = `已导入 ${result.added} 个账号，更新 ${result.updated} 个，跳过 ${result.skipped} 个。`
+		if (result.autoLoginQueued > 0) {
+			success.value = `已导入 ${result.added} 个账号，并自动开始登录 ${result.autoLoginQueued} 个账号。`
+		} else if (result.autoLoginBlocked) {
+			error.value = '账号已导入，但未自动登录：请先配置 Telegram API ID 和 API Hash。'
+		} else {
+			success.value = `已导入 ${result.added} 个账号，更新 ${result.updated} 个，跳过 ${result.skipped} 个。`
+		}
 	} catch (err) {
 		error.value = messageFrom(err, '批量导入失败')
 	} finally {
@@ -572,7 +605,7 @@ onBeforeUnmount(() => {
       </template>
 
       <section v-else-if="activeSection === 'accounts'" class="workspace">
-        <div class="capability-banner"><Smartphone :size="19" /><div><strong>{{ capabilities?.telegramConfigured ? 'Telegram API 已配置' : '等待配置 Telegram API' }}</strong><p>批量导入只保存加密后的取码链接；自动登录和状态检测在后台执行，完整链接不会显示在列表或接口响应中。</p></div></div>
+        <div class="capability-banner"><Smartphone :size="19" /><div><strong>{{ capabilities?.telegramConfigured ? 'Telegram API 已配置，导入后自动登录' : '未配置 Telegram API，无法登录账号' }}</strong><p>{{ capabilities?.telegramConfigured ? '导入带取码链接的账号后，系统会自动获取验证码并登录；需要两步验证时会停在“等待 2FA”。' : 'Telegram API ID 和 API Hash 是 Telegram 官方签发的客户端凭据，不能由系统自动生成。' }}</p><a v-if="!capabilities?.telegramConfigured" href="#settings">前往系统设置</a></div></div>
         <div class="account-status-strip" aria-label="账号状态统计">
           <div><span>全部账号</span><strong>{{ accountStats.total }}</strong></div>
           <div><span>当前在线</span><strong class="tone-good">{{ accountStats.online }}</strong></div>
@@ -612,6 +645,7 @@ onBeforeUnmount(() => {
 
       <section v-else class="content-grid settings-grid">
         <div class="panel"><div class="panel-title"><div><h2>服务状态</h2><p>当前实例的基础运行状态</p></div><CheckCircle2 :size="20" /></div><dl><div><dt>应用版本</dt><dd>{{ versionText }}</dd></div><div><dt>构建提交</dt><dd class="hash">{{ info?.commit || 'none' }}</dd></div><div><dt>公开地址</dt><dd class="hash">{{ info?.publicUrl || '-' }}</dd></div><div><dt>数据库</dt><dd>SQLite WAL</dd></div></dl></div>
+        <form class="panel telegram-setup-panel" @submit.prevent="saveTelegramSettings"><div class="panel-title"><div><h2>Telegram 登录配置</h2><p>导入账号自动登录所需</p></div><Smartphone :size="20" /></div><div class="setup-status"><span class="status" :class="capabilities?.telegramConfigured ? 'ok' : 'danger'">{{ capabilities?.telegramConfigured ? '已配置' : '未配置' }}</span><strong>{{ capabilities?.telegramConfigured ? '导入后会自动登录' : '当前无法登录 Telegram 账号' }}</strong></div><div class="password-settings-fields"><label>API ID<input v-model="telegramSettingsForm.apiId" inputmode="numeric" pattern="[0-9]+" placeholder="12345678" required /></label><label>API Hash<input v-model="telegramSettingsForm.apiHash" type="password" autocomplete="new-password" pattern="[A-Fa-f0-9]{32}" :placeholder="telegramSettings?.hasApiHash ? '重新输入以更新' : '32 位 API Hash'" required /></label></div><p class="setup-copy">这两项由 Telegram 官方签发，不能自动生成。前往 <a href="https://my.telegram.org/apps" target="_blank" rel="noreferrer">my.telegram.org/apps</a> 创建应用后填入；API Hash 会加密保存且不会回显。</p><button class="primary" type="submit" :disabled="telegramSettingsSaving"><RefreshCw v-if="telegramSettingsSaving" :size="17" class="spinning" /><ShieldCheck v-else :size="17" />{{ telegramSettingsSaving ? '正在保存' : '保存 Telegram 配置' }}</button></form>
         <div class="panel update-panel"><div class="panel-title"><div><h2>版本升级</h2><p>从 GitHub Releases 获取稳定版本</p></div><ShieldCheck :size="20" /></div><div v-if="!release" class="update-empty"><Download :size="28" /><p>检查是否有可用的新版本</p></div><div v-else class="release-result"><strong v-if="!release.configured">尚未配置 GitHub 仓库</strong><strong v-else-if="release.available">发现新版本 {{ release.latestVersion }}</strong><strong v-else>当前已是最新版本</strong><a v-if="release.releaseUrl" :href="release.releaseUrl" target="_blank" rel="noreferrer">查看发布说明</a><span v-if="updateMessage" class="update-message">{{ updateMessage }}</span></div><button v-if="release?.available" class="primary" :disabled="updating || !!updateMessage" @click="applyUpdate"><RefreshCw :size="17" :class="{ spinning: updating }" />{{ updateMessage ? '正在重启' : updating ? '正在升级' : '立即升级' }}</button><button v-else class="primary" :disabled="checking" @click="checkUpdate"><RefreshCw :size="17" :class="{ spinning: checking }" />{{ checking ? '正在检查' : '检查更新' }}</button></div>
         <form class="panel password-settings" @submit.prevent="changeAdminPassword"><div class="panel-title"><div><h2>管理员密码</h2><p>更新此实例的登录凭据</p></div><LockKeyhole :size="20" /></div><div class="password-settings-fields"><label>当前密码<input v-model="passwordForm.currentPassword" type="password" autocomplete="current-password" required /></label><label>新密码<input v-model="passwordForm.newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required /></label><label>确认新密码<input v-model="passwordForm.confirmPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required /></label></div><button class="primary" :disabled="passwordChanging" type="submit"><RefreshCw v-if="passwordChanging" :size="17" class="spinning" /><ShieldCheck v-else :size="17" />{{ passwordChanging ? '正在保存' : '修改密码' }}</button></form>
       </section>
