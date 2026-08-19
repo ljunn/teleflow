@@ -201,7 +201,11 @@ func (a *authService) middleware() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "读取认证状态失败"})
 			return
 		}
-		if !configured || a.authenticated(c) {
+		if !configured {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "请先完成初始化"})
+			return
+		}
+		if a.authenticated(c) {
 			c.Next()
 			return
 		}

@@ -23,10 +23,21 @@ func TestHealthAndSystemInfo(t *testing.T) {
 
 	handler := New(config.Config{PublicURL: "http://localhost"}, db, updater.New(updater.Options{Current: "dev"}), slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	for _, path := range []string{"/health/live", "/health/ready", "/api/v1/system/info", "/api/v1/overview"} {
+	for _, path := range []string{"/health/live", "/health/ready"} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s returned %d: %s", path, response.Code, response.Body.String())
+		}
+	}
+	setup := serveJSON(handler, http.MethodPost, "/api/v1/auth/setup", `{"password":"admin"}`, nil)
+	if setup.Code != http.StatusOK {
+		t.Fatalf("setup returned %d: %s", setup.Code, setup.Body.String())
+	}
+	session := setup.Result().Cookies()[0]
+	for _, path := range []string{"/api/v1/system/info", "/api/v1/overview"} {
+		response := serveJSON(handler, http.MethodGet, path, "", session)
 		if response.Code != http.StatusOK {
 			t.Fatalf("%s returned %d: %s", path, response.Code, response.Body.String())
 		}
@@ -40,6 +51,7 @@ func TestHealthAndSystemInfo(t *testing.T) {
 	}
 
 	request = httptest.NewRequest(http.MethodPost, "/api/v1/system/update", nil)
+	request.AddCookie(session)
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusConflict {

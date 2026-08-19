@@ -28,6 +28,10 @@ func TestAuthenticationFlow(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"configured":false`) || !strings.Contains(response.Body.String(), `"defaultPassword":"admin"`) {
 		t.Fatalf("initial status returned %d: %s", response.Code, response.Body.String())
 	}
+	response = serveJSON(handler, http.MethodGet, "/api/v1/overview", "", nil)
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "请先完成初始化") {
+		t.Fatalf("unconfigured overview returned %d: %s", response.Code, response.Body.String())
+	}
 
 	response = serveJSON(handler, http.MethodPost, "/api/v1/auth/setup", `{"password":"not-admin"}`, nil)
 	if response.Code != http.StatusBadRequest {
