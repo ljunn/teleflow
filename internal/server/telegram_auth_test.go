@@ -18,6 +18,8 @@ type fakeAccountAuthorizer struct {
 	requestResult  accountAuthResult
 	verifyResult   accountAuthResult
 	passwordResult accountAuthResult
+	autoResult     accountAuthResult
+	checkResult    accountAuthResult
 	phone          string
 	codeHash       string
 	code           string
@@ -37,6 +39,15 @@ func (f *fakeAccountAuthorizer) VerifyCode(_ context.Context, _ int64, phone, co
 func (f *fakeAccountAuthorizer) VerifyPassword(_ context.Context, _ int64, password string) (accountAuthResult, error) {
 	f.password = password
 	return f.passwordResult, nil
+}
+
+func (f *fakeAccountAuthorizer) AutoLogin(_ context.Context, _ int64, phone, _ string) (accountAuthResult, error) {
+	f.phone = phone
+	return f.autoResult, nil
+}
+
+func (f *fakeAccountAuthorizer) Check(_ context.Context, _ int64) (accountAuthResult, error) {
+	return f.checkResult, nil
 }
 
 func TestAccountAuthorizationFlow(t *testing.T) {

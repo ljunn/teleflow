@@ -94,6 +94,34 @@ dd.hash { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 .form-grid label { display: grid; gap: 7px; min-width: 0; }
 .form-grid .full { grid-column: 1 / -1; }
 .account-form { grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto; }
+.account-status-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid #dfe4e7; border-radius: 7px; background: #fff; }
+.account-status-strip div { min-height: 82px; padding: 15px 18px; display: flex; flex-direction: column; justify-content: center; gap: 7px; border-right: 1px solid #edf0f2; }
+.account-status-strip div:last-child { border-right: 0; }
+.account-status-strip span { color: #69747e; font-size: 12px; }
+.account-status-strip strong { color: #27323b; font-size: 22px; }
+.account-status-strip .tone-good { color: #087356; }
+.account-status-strip .tone-working { color: #246b8f; }
+.account-status-strip .tone-action { color: #9b5d10; }
+.account-workspace-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(260px, .7fr); gap: 16px; align-items: stretch; }
+.account-import-panel { min-width: 0; }
+.account-actions-panel { display: flex; flex-direction: column; }
+.segmented { width: fit-content; margin-bottom: 16px; padding: 3px; display: flex; gap: 2px; border: 1px solid #d8dee2; border-radius: 6px; background: #f3f5f6; }
+.segmented button { min-height: 32px; padding: 0 11px; border: 0; border-radius: 4px; background: transparent; color: #65717b; display: inline-flex; align-items: center; gap: 7px; cursor: pointer; font-size: 12px; }
+.segmented button.active { background: #fff; color: #17202a; box-shadow: 0 1px 2px rgba(17, 31, 42, .12); }
+.account-import-form { display: grid; gap: 11px; }
+.account-import-form label { display: grid; gap: 7px; color: #48525c; font-size: 13px; font-weight: 600; }
+.account-import-form textarea { width: 100%; min-height: 154px; padding: 11px 12px; border: 1px solid #cfd5da; border-radius: 6px; color: #17202a; background: #fff; outline: none; resize: vertical; font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.account-import-form textarea:focus { border-color: #087f5b; box-shadow: 0 0 0 3px rgba(8, 127, 91, .12); }
+.form-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.form-actions span { color: #78838c; font-size: 11px; }
+.account-actions-panel .wide { width: 100%; min-height: 42px; }
+.action-note { margin-top: 16px; padding-top: 16px; border-top: 1px solid #edf0f2; color: #65717b; display: flex; align-items: flex-start; gap: 9px; font-size: 12px; line-height: 1.6; }
+.action-note svg { margin-top: 1px; color: #087f5b; flex: none; }
+.import-errors { margin-top: 14px; padding: 11px 13px; border-left: 3px solid #c17a1f; background: #fff8ed; color: #76501d; display: grid; gap: 4px; font-size: 12px; }
+.status.working { color: #246b8f; background: #e9f3f8; }
+.status.warning { color: #885311; background: #fff3df; }
+.status.danger { color: #9b3025; background: #fdecea; }
+.status-dot-inline { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .discovery-form { grid-template-columns: minmax(220px, 1fr) minmax(160px, .5fr) auto; }
 .campaign-form .primary { justify-self: start; min-width: 150px; }
 .primary, .secondary { min-height: 40px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; }
@@ -116,7 +144,7 @@ td.actions .icon-button { margin-left: auto; }
 .account-username, .account-error { display: block; margin-top: 4px; font-size: 11px; font-weight: 400; }
 .account-username { color: #6f7983; }
 .account-error { max-width: 220px; color: #a43125; white-space: normal; }
-th.account-actions, td.account-actions { min-width: 230px; padding-right: 0; text-align: right; }
+th.account-actions, td.account-actions { min-width: 330px; padding-right: 0; text-align: right; }
 td.account-actions { display: flex; justify-content: flex-end; align-items: center; gap: 7px; }
 .secondary.compact { min-height: 34px; padding: 0 10px; font-size: 12px; }
 .auth-step-row td { padding: 0 0 14px; border-bottom: 1px solid #dce2e6; }
@@ -169,6 +197,7 @@ td.account-actions { display: flex; justify-content: flex-end; align-items: cent
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .account-form, .discovery-form { grid-template-columns: 1fr 1fr; }
   .account-form .primary, .discovery-form .primary { justify-self: start; }
+	.account-workspace-grid { grid-template-columns: 1fr; }
   .relay-layout { grid-template-columns: 1fr; }
   .relay-layout .capability-banner { grid-column: auto; }
 }
@@ -190,6 +219,11 @@ td.account-actions { display: flex; justify-content: flex-end; align-items: cent
   .sidebar-foot button { display: grid; }
   .app-main { padding: 20px 14px 36px; overflow-x: hidden; }
   .metrics, .content-grid, .form-grid, .account-form, .discovery-form { grid-template-columns: 1fr; }
+	.account-status-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.account-status-strip div:nth-child(2) { border-right: 0; }
+	.account-status-strip div:nth-child(-n+2) { border-bottom: 1px solid #edf0f2; }
+	.form-actions { align-items: stretch; flex-direction: column; }
+	.form-actions .primary { width: 100%; }
   .metrics { gap: 10px; }
   .content-grid { gap: 12px; }
   .panel, .workspace-panel { padding: 17px; }

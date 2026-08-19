@@ -37,6 +37,8 @@ type accountAuthorizer interface {
 	RequestCode(ctx context.Context, accountID int64, phone string) (accountAuthResult, error)
 	VerifyCode(ctx context.Context, accountID int64, phone, codeHash, code string) (accountAuthResult, error)
 	VerifyPassword(ctx context.Context, accountID int64, password string) (accountAuthResult, error)
+	AutoLogin(ctx context.Context, accountID int64, phone, codeURL string) (accountAuthResult, error)
+	Check(ctx context.Context, accountID int64) (accountAuthResult, error)
 }
 
 type gotdAccountAuthorizer struct {
@@ -104,7 +106,124 @@ func (a *gotdAccountAuthorizer) VerifyPassword(ctx context.Context, accountID in
 	return result, err
 }
 
+func (a *gotdAccountAuthorizer) AutoLogin(ctx context.Context, accountID int64, phone, codeURL string) (accountAuthResult, error) {
+	var baseline string
+	baselineCtx, cancelBaseline := context.WithTimeout(ctx, 20*time.Second)
+	baseline, _ = fetchTelegramCode(baselineCtx, codeURL)
+	cancelBaseline()
+
+	var result accountAuthResult
+	err := a.runWithTimeout(ctx, accountID, 150*time.Second, func(runCtx context.Context, client *telegram.Client) error {
+		sent, err := client.Auth().SendCode(runCtx, phone, tgauth.SendCodeOptions{})
+		if err != nil {
+			return err
+		}
+		value, ok := sent.(*tg.AuthSentCode)
+		if !ok {
+			return storeImmediateAuthorization(sent, &result)
+		}
+
+		codeHash := value.PhoneCodeHash
+		excluded := make(map[string]struct{}, 4)
+		if baseline != "" {
+			excluded[baseline] = struct{}{}
+		}
+		resends := 0
+		invalidCodes := 0
+		for {
+			pollCtx, cancelPoll := context.WithTimeout(runCtx, 35*time.Second)
+			credentials, waitErr := waitForTelegramCredentials(pollCtx, codeURL, excluded)
+			cancelPoll()
+			if waitErr != nil {
+				if resends >= 1 {
+					return waitErr
+				}
+				resent, resendErr := client.Auth().ResendCode(runCtx, phone, codeHash)
+				if resendErr != nil {
+					return resendErr
+				}
+				resentValue, resentOK := resent.(*tg.AuthSentCode)
+				if !resentOK {
+					return storeImmediateAuthorization(resent, &result)
+				}
+				codeHash = resentValue.PhoneCodeHash
+				resends++
+				continue
+			}
+
+			authorization, signInErr := client.Auth().SignIn(runCtx, phone, credentials.Code, codeHash)
+			if tgerr.Is(signInErr, "PHONE_CODE_INVALID") {
+				excluded[credentials.Code] = struct{}{}
+				invalidCodes++
+				if invalidCodes >= 3 {
+					return signInErr
+				}
+				continue
+			}
+			if errors.Is(signInErr, tgauth.ErrPasswordAuthNeeded) {
+				if credentials.Password == "" {
+					result = accountAuthResult{Status: "password_required"}
+					return nil
+				}
+				authorization, signInErr = client.Auth().Password(runCtx, credentials.Password)
+			}
+			if signInErr != nil {
+				return signInErr
+			}
+			result = resultFromAuthorization(authorization)
+			return nil
+		}
+	})
+	return result, err
+}
+
+func storeImmediateAuthorization(sent tg.AuthSentCodeClass, result *accountAuthResult) error {
+	success, ok := sent.(*tg.AuthSentCodeSuccess)
+	if !ok {
+		return fmt.Errorf("unexpected send-code response %T", sent)
+	}
+	authorization, ok := success.Authorization.(*tg.AuthAuthorization)
+	if !ok {
+		return fmt.Errorf("unexpected authorization response %T", success.Authorization)
+	}
+	*result = resultFromAuthorization(authorization)
+	return nil
+}
+
+func (a *gotdAccountAuthorizer) Check(ctx context.Context, accountID int64) (accountAuthResult, error) {
+	var result accountAuthResult
+	err := a.run(ctx, accountID, func(runCtx context.Context, client *telegram.Client) error {
+		status, err := client.Auth().Status(runCtx)
+		if err != nil {
+			return err
+		}
+		if !status.Authorized || status.User == nil {
+			result = accountAuthResult{Status: "unauthorized"}
+			return nil
+		}
+		user := status.User
+		accountStatus := "online"
+		if user.Deleted {
+			accountStatus = "banned"
+		} else if user.Restricted {
+			accountStatus = "restricted"
+		}
+		result = accountAuthResult{
+			Status:      accountStatus,
+			UserID:      user.ID,
+			Username:    user.Username,
+			DisplayName: strings.TrimSpace(strings.Join([]string{user.FirstName, user.LastName}, " ")),
+		}
+		return nil
+	})
+	return result, err
+}
+
 func (a *gotdAccountAuthorizer) run(ctx context.Context, accountID int64, callback func(context.Context, *telegram.Client) error) error {
+	return a.runWithTimeout(ctx, accountID, 75*time.Second, callback)
+}
+
+func (a *gotdAccountAuthorizer) runWithTimeout(ctx context.Context, accountID int64, timeout time.Duration, callback func(context.Context, *telegram.Client) error) error {
 	if a.cfg.TelegramAPIID <= 0 || a.cfg.TelegramAPIHash == "" {
 		return errTelegramNotConfigured
 	}
@@ -117,7 +236,7 @@ func (a *gotdAccountAuthorizer) run(ctx context.Context, accountID int64, callba
 	lock.Lock()
 	defer lock.Unlock()
 
-	runCtx, cancel := context.WithTimeout(ctx, 75*time.Second)
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	client := telegram.NewClient(a.cfg.TelegramAPIID, a.cfg.TelegramAPIHash, telegram.Options{
 		SessionStorage: &encryptedSessionStorage{db: a.db, accountID: accountID, key: a.cfg.SessionKey},
@@ -154,12 +273,29 @@ func telegramErrorMessage(err error) string {
 		return "Telegram 不接受该手机号"
 	case tgerr.Is(err, "PHONE_NUMBER_BANNED"):
 		return "该 Telegram 账号已被限制"
+	case tgerr.Is(err, "AUTH_KEY_UNREGISTERED", "SESSION_EXPIRED", "AUTH_KEY_DUPLICATED"):
+		return "Telegram 会话已失效，请重新登录"
+	case tgerr.Is(err, "USER_DEACTIVATED", "USER_DEACTIVATED_BAN"):
+		return "该 Telegram 账号已停用或封禁"
 	case tgerr.Is(err, "FLOOD_WAIT"):
 		return "Telegram 请求过于频繁，请稍后再试"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "连接 Telegram 超时，请稍后再试"
 	default:
 		return "Telegram 授权失败，请稍后重试"
+	}
+}
+
+func telegramFailureStatus(err error) string {
+	switch {
+	case tgerr.Is(err, "AUTH_KEY_UNREGISTERED", "SESSION_EXPIRED", "AUTH_KEY_DUPLICATED"):
+		return "unauthorized"
+	case tgerr.Is(err, "PHONE_NUMBER_BANNED", "USER_DEACTIVATED", "USER_DEACTIVATED_BAN"):
+		return "banned"
+	case tgerr.Is(err, "FLOOD_WAIT"):
+		return "flood_wait"
+	default:
+		return "error"
 	}
 }
 

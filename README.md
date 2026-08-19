@@ -11,6 +11,7 @@ Teleflow 是面向单一所有者的 Telegram 多账号自动化和私域运营�
 - 健康检查、系统信息、运行概览和 GitHub Release 检查 API
 - 默认管理员登录、登录后修改密码和会话保护
 - Telegram 手机号、验证码和可选 2FA 授权流程，Session 使用 AES-GCM 加密后持久保存
+- 批量导入“手机号 + 取码链接”、后台自动取码登录和账号存活状态检测
 - 账号矩阵、采集任务、营销任务和主号中转的持久化管理
 - Telegram 与 Relay Bot 运行能力检测和安全等待状态
 - GitHub Release 检查、校验下载和网页在线升级
@@ -29,6 +30,8 @@ TELEFLOW_RELAY_BOT_TOKEN=123456:your_bot_token
 ```
 
 API ID/hash 需要从 Telegram 的 API development tools 获取，Bot Token 需要从 BotFather 获取。配置 API 后，在账号矩阵中可以按手机号发送验证码并完成可选 2FA；未配置或账号未授权时，系统会明确显示等待连接，并且不会执行采集或发送任务。
+
+账号矩阵支持每行一个账号的批量清单，例如 `+10000000000----https://vendor.example/code/GetHTML`。也兼容 `|`、Tab、逗号和分号分隔。取码链接使用实例 Session Key 加密保存，账号列表和 API 响应不会返回完整链接。自动登录会从结构化页面字段读取新验证码和可选 2FA，在短暂返回旧码时有界重试；完成后可执行单账号或批量存活检测，区分在线、受限、会话失效、封禁和连接失败。
 
 ## 在线升级
 

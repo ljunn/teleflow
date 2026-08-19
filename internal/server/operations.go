@@ -1,12 +1,14 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -22,15 +24,24 @@ type operationsService struct {
 }
 
 type telegramAccount struct {
-	ID          int64   `json:"id"`
-	Phone       string  `json:"phone"`
-	DisplayName string  `json:"displayName"`
-	Status      string  `json:"status"`
-	Username    string  `json:"username"`
-	LastError   string  `json:"lastError"`
-	LastSeenAt  *string `json:"lastSeenAt"`
-	CodeSentAt  *string `json:"codeSentAt"`
-	CreatedAt   string  `json:"createdAt"`
+	ID            int64   `json:"id"`
+	Phone         string  `json:"phone"`
+	DisplayName   string  `json:"displayName"`
+	Status        string  `json:"status"`
+	Username      string  `json:"username"`
+	LastError     string  `json:"lastError"`
+	HasCodeURL    bool    `json:"hasCodeUrl"`
+	HasSession    bool    `json:"hasSession"`
+	SourceType    string  `json:"sourceType"`
+	LastSeenAt    *string `json:"lastSeenAt"`
+	LastCheckedAt *string `json:"lastCheckedAt"`
+	CodeSentAt    *string `json:"codeSentAt"`
+	CreatedAt     string  `json:"createdAt"`
+}
+
+type accountImportError struct {
+	Line  int    `json:"line"`
+	Error string `json:"error"`
 }
 
 type discoveryTask struct {
@@ -70,12 +81,23 @@ func registerOperationsRoutes(group *gin.RouterGroup, cfg config.Config, db *sql
 		authorizer = authorizers[0]
 	}
 	service := &operationsService{db: db, cfg: cfg, authorizer: authorizer}
+	_, _ = db.Exec(`
+		UPDATE telegram_accounts
+		SET status = CASE WHEN session_ciphertext IS NOT NULL AND length(session_ciphertext) > 0 THEN 'online' ELSE 'error' END,
+			last_error = CASE WHEN session_ciphertext IS NOT NULL AND length(session_ciphertext) > 0 THEN '' ELSE '上次连接操作因服务重启而中断，请重试' END,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE status IN ('logging_in', 'checking')
+	`)
 	group.GET("/capabilities", service.capabilities)
 	group.GET("/accounts", service.listAccounts)
 	group.POST("/accounts", service.createAccount)
+	group.POST("/accounts/import", service.importAccounts)
+	group.POST("/accounts/check", service.checkAllAccounts)
 	group.POST("/accounts/:id/auth/code", service.requestAccountCode)
 	group.POST("/accounts/:id/auth/verify", service.verifyAccountCode)
 	group.POST("/accounts/:id/auth/password", service.verifyAccountPassword)
+	group.POST("/accounts/:id/auth/auto", service.autoLoginAccount)
+	group.POST("/accounts/:id/check", service.checkAccount)
 	group.DELETE("/accounts/:id", service.deleteAccount)
 	group.GET("/discovery", service.listDiscovery)
 	group.POST("/discovery", service.createDiscovery)
@@ -90,7 +112,7 @@ func registerOperationsRoutes(group *gin.RouterGroup, cfg config.Config, db *sql
 
 func (s *operationsService) capabilities(c *gin.Context) {
 	var connectedAccounts int
-	if err := s.db.QueryRowContext(c.Request.Context(), "SELECT COUNT(*) FROM telegram_accounts WHERE status = 'online'").Scan(&connectedAccounts); err != nil {
+	if err := s.db.QueryRowContext(c.Request.Context(), "SELECT COUNT(*) FROM telegram_accounts WHERE status IN ('online', 'authorized', 'restricted')").Scan(&connectedAccounts); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取运行能力失败"})
 		return
 	}
@@ -103,8 +125,12 @@ func (s *operationsService) capabilities(c *gin.Context) {
 
 func (s *operationsService) listAccounts(c *gin.Context) {
 	rows, err := s.db.QueryContext(c.Request.Context(), `
-		SELECT id, phone, display_name, status, username, last_error, last_seen_at, auth_code_sent_at, created_at
-		FROM telegram_accounts ORDER BY created_at DESC, id DESC
+			SELECT id, phone, display_name, status, username, last_error,
+				code_url_ciphertext IS NOT NULL,
+				session_ciphertext IS NOT NULL AND length(session_ciphertext) > 0,
+				source_type, last_seen_at, last_checked_at,
+				auth_code_sent_at, created_at
+			FROM telegram_accounts ORDER BY created_at DESC, id DESC
 	`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取账号列表失败"})
@@ -114,13 +140,16 @@ func (s *operationsService) listAccounts(c *gin.Context) {
 	accounts := make([]telegramAccount, 0)
 	for rows.Next() {
 		var item telegramAccount
-		var lastSeen, codeSent sql.NullString
-		if err := rows.Scan(&item.ID, &item.Phone, &item.DisplayName, &item.Status, &item.Username, &item.LastError, &lastSeen, &codeSent, &item.CreatedAt); err != nil {
+		var lastSeen, lastChecked, codeSent sql.NullString
+		if err := rows.Scan(&item.ID, &item.Phone, &item.DisplayName, &item.Status, &item.Username, &item.LastError, &item.HasCodeURL, &item.HasSession, &item.SourceType, &lastSeen, &lastChecked, &codeSent, &item.CreatedAt); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取账号列表失败"})
 			return
 		}
 		if lastSeen.Valid {
 			item.LastSeenAt = &lastSeen.String
+		}
+		if lastChecked.Valid {
+			item.LastCheckedAt = &lastChecked.String
 		}
 		if codeSent.Valid {
 			item.CodeSentAt = &codeSent.String
@@ -162,6 +191,312 @@ func (s *operationsService) createAccount(c *gin.Context) {
 	}
 	id, _ := result.LastInsertId()
 	c.JSON(http.StatusCreated, gin.H{"id": id, "status": "pending"})
+}
+
+func (s *operationsService) importAccounts(c *gin.Context) {
+	var input struct {
+		Text string `json:"text"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil || strings.TrimSpace(input.Text) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请粘贴需要导入的账号"})
+		return
+	}
+	if len(input.Text) > 256*1024 {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "单次导入内容不能超过 256 KiB"})
+		return
+	}
+	if len(s.cfg.SessionKey) != 32 {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "会话加密密钥不可用"})
+		return
+	}
+	items, problems := parseAccountImport(input.Text)
+	if len(items) > 500 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "单次最多导入 500 个账号"})
+		return
+	}
+	if len(items) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "没有识别到可导入的账号", "errors": problems})
+		return
+	}
+
+	tx, err := s.db.BeginTx(c.Request.Context(), nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "开始导入失败"})
+		return
+	}
+	defer tx.Rollback()
+	added, updated, skipped := 0, 0, 0
+	for _, item := range items {
+		var accountID int64
+		var displayName string
+		var currentCiphertext []byte
+		isNew := false
+		err := tx.QueryRowContext(c.Request.Context(), `
+			SELECT id, display_name, code_url_ciphertext FROM telegram_accounts WHERE phone = ?
+		`, item.Phone).Scan(&accountID, &displayName, &currentCiphertext)
+		if errors.Is(err, sql.ErrNoRows) {
+			result, insertErr := tx.ExecContext(c.Request.Context(), `
+				INSERT INTO telegram_accounts(phone, display_name, status, source_type)
+				VALUES(?, ?, 'pending', 'code_url')
+			`, item.Phone, item.DisplayName)
+			if insertErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "保存导入账号失败"})
+				return
+			}
+			accountID, _ = result.LastInsertId()
+			isNew = true
+			added++
+		} else if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取现有账号失败"})
+			return
+		}
+
+		changed := len(currentCiphertext) == 0
+		if len(currentCiphertext) > 0 {
+			currentURL, decryptErr := decryptAccountSecret(s.cfg.SessionKey, accountID, "code-url", currentCiphertext)
+			changed = decryptErr != nil || currentURL != item.CodeURL
+		}
+		nameChanged := displayName == "" && item.DisplayName != ""
+		if accountID == 0 {
+			// Defensive only; LastInsertId is required by SQLite.
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存导入账号失败"})
+			return
+		}
+		encrypted, encryptErr := encryptAccountSecret(s.cfg.SessionKey, accountID, "code-url", item.CodeURL)
+		if encryptErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "加密取码链接失败"})
+			return
+		}
+		if _, err := tx.ExecContext(c.Request.Context(), `
+			UPDATE telegram_accounts
+			SET code_url_ciphertext = ?, source_type = 'code_url',
+				display_name = CASE WHEN display_name = '' THEN ? ELSE display_name END,
+				updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, encrypted, item.DisplayName, accountID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存取码链接失败"})
+			return
+		}
+		if isNew {
+			continue
+		}
+		if changed || nameChanged {
+			updated++
+		} else {
+			skipped++
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "提交导入失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"parsed": len(items), "added": added, "updated": updated,
+		"skipped": skipped, "errors": problems,
+	})
+}
+
+func (s *operationsService) autoLoginAccount(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	if s.cfg.TelegramAPIID <= 0 || s.cfg.TelegramAPIHash == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "请先配置 Telegram API ID 和 API Hash"})
+		return
+	}
+	var phone, status string
+	var encrypted []byte
+	if err := s.db.QueryRowContext(c.Request.Context(), `
+		SELECT phone, status, code_url_ciphertext FROM telegram_accounts WHERE id = ?
+	`, id).Scan(&phone, &status, &encrypted); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "账号不存在"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取账号失败"})
+		}
+		return
+	}
+	if len(encrypted) == 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "该账号没有取码链接，请使用验证码登录"})
+		return
+	}
+	if status == "logging_in" || status == "checking" {
+		c.JSON(http.StatusConflict, gin.H{"error": "该账号正在执行连接操作"})
+		return
+	}
+	codeURL, err := decryptAccountSecret(s.cfg.SessionKey, id, "code-url", encrypted)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取取码链接失败"})
+		return
+	}
+	result, err := s.db.ExecContext(c.Request.Context(), `
+		UPDATE telegram_accounts
+		SET status = 'logging_in',
+			session_ciphertext = CASE WHEN status = 'unauthorized' THEN NULL ELSE session_ciphertext END,
+			last_error = '', updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status NOT IN ('logging_in', 'checking')
+	`, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "启动自动登录失败"})
+		return
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "该账号正在执行连接操作"})
+		return
+	}
+	go s.runAutoLogin(id, phone, codeURL)
+	c.JSON(http.StatusAccepted, gin.H{"status": "logging_in"})
+}
+
+func (s *operationsService) runAutoLogin(id int64, phone, codeURL string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	result, err := s.authorizer.AutoLogin(ctx, id, phone, codeURL)
+	if err != nil {
+		s.storeBackgroundAccountError(ctx, id, err)
+		return
+	}
+	if result.Status == "password_required" {
+		_, _ = s.db.ExecContext(ctx, `
+			UPDATE telegram_accounts SET status = 'password_required', last_error = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?
+		`, id)
+		return
+	}
+	if err := s.saveAccountAuthorization(ctx, id, result); err != nil {
+		_, _ = s.db.ExecContext(ctx, `
+			UPDATE telegram_accounts SET status = 'error', last_error = '保存 Telegram 授权失败', updated_at = CURRENT_TIMESTAMP WHERE id = ?
+		`, id)
+	}
+}
+
+func (s *operationsService) checkAccount(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	queued, err := s.queueAccountCheck(c.Request.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "账号不存在"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "启动状态检测失败"})
+		return
+	}
+	if !queued {
+		c.JSON(http.StatusConflict, gin.H{"error": "该账号正在执行连接操作或尚未登录"})
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"status": "checking"})
+}
+
+func (s *operationsService) checkAllAccounts(c *gin.Context) {
+	rows, err := s.db.QueryContext(c.Request.Context(), `
+		SELECT id FROM telegram_accounts
+		WHERE session_ciphertext IS NOT NULL AND length(session_ciphertext) > 0
+			AND status NOT IN ('logging_in', 'checking')
+		ORDER BY id
+	`)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取待检测账号失败"})
+		return
+	}
+	defer rows.Close()
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	queued := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if ok, _ := s.markAccountChecking(c.Request.Context(), id); ok {
+			queued = append(queued, id)
+		}
+	}
+	go func() {
+		for _, id := range queued {
+			s.runAccountCheck(id)
+		}
+	}()
+	c.JSON(http.StatusAccepted, gin.H{"queued": len(queued)})
+}
+
+func (s *operationsService) queueAccountCheck(ctx context.Context, id int64) (bool, error) {
+	var hasSession bool
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT session_ciphertext IS NOT NULL AND length(session_ciphertext) > 0
+		FROM telegram_accounts WHERE id = ?
+	`, id).Scan(&hasSession); err != nil {
+		return false, err
+	}
+	if !hasSession {
+		return false, nil
+	}
+	queued, err := s.markAccountChecking(ctx, id)
+	if err == nil && queued {
+		go s.runAccountCheck(id)
+	}
+	return queued, err
+}
+
+func (s *operationsService) markAccountChecking(ctx context.Context, id int64) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE telegram_accounts SET status = 'checking', last_error = '', updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status NOT IN ('logging_in', 'checking')
+	`, id)
+	if err != nil {
+		return false, err
+	}
+	rows, _ := result.RowsAffected()
+	return rows > 0, nil
+}
+
+func (s *operationsService) runAccountCheck(id int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	result, err := s.authorizer.Check(ctx, id)
+	if err != nil {
+		s.storeBackgroundAccountError(ctx, id, err)
+		return
+	}
+	status := result.Status
+	if status != "online" && status != "restricted" && status != "unauthorized" && status != "banned" {
+		status = "error"
+	}
+	lastError := ""
+	if status == "unauthorized" {
+		lastError = "Telegram 会话已失效，请重新登录"
+	} else if status == "banned" {
+		lastError = "该 Telegram 账号已停用或封禁"
+	}
+	_, _ = s.db.ExecContext(ctx, `
+		UPDATE telegram_accounts
+		SET status = ?, telegram_user_id = CASE WHEN ? > 0 THEN ? ELSE telegram_user_id END,
+			username = CASE WHEN ? != '' THEN ? ELSE username END,
+			display_name = CASE WHEN display_name = '' THEN ? ELSE display_name END,
+			last_error = ?, last_checked_at = CURRENT_TIMESTAMP,
+			last_seen_at = CASE WHEN ? IN ('online', 'restricted') THEN CURRENT_TIMESTAMP ELSE last_seen_at END,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, status, result.UserID, result.UserID, result.Username, result.Username, result.DisplayName, lastError, status, id)
+}
+
+func (s *operationsService) storeBackgroundAccountError(ctx context.Context, id int64, authErr error) {
+	message := telegramErrorMessage(authErr)
+	status := telegramFailureStatus(authErr)
+	// The worker context may already be canceled because the Telegram timeout
+	// elapsed. Persist the terminal state with a short independent context so
+	// accounts cannot remain stuck in logging_in/checking forever.
+	writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = s.db.ExecContext(writeCtx, `
+		UPDATE telegram_accounts
+		SET status = ?, last_error = ?, last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, status, message, id)
 }
 
 func (s *operationsService) deleteAccount(c *gin.Context) {
@@ -301,19 +636,27 @@ func (s *operationsService) storeAccountAuthorization(c *gin.Context, id int64, 
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Telegram 未返回有效授权状态"})
 		return false
 	}
-	_, err := s.db.ExecContext(c.Request.Context(), `
-		UPDATE telegram_accounts
-		SET status = 'authorized', telegram_user_id = ?, username = ?,
-			display_name = CASE WHEN display_name = '' THEN ? ELSE display_name END,
-			auth_code_hash = '', auth_code_sent_at = NULL, last_error = '',
-			last_seen_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, result.UserID, result.Username, result.DisplayName, id)
-	if err != nil {
+	if err := s.saveAccountAuthorization(c.Request.Context(), id, result); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存 Telegram 授权失败"})
 		return false
 	}
 	return true
+}
+
+func (s *operationsService) saveAccountAuthorization(ctx context.Context, id int64, result accountAuthResult) error {
+	if result.Status != "authorized" {
+		return errors.New("invalid Telegram authorization result")
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE telegram_accounts
+		SET status = 'online', telegram_user_id = ?, username = ?,
+			display_name = CASE WHEN display_name = '' THEN ? ELSE display_name END,
+			auth_code_hash = '', auth_code_sent_at = NULL, last_error = '',
+			last_seen_at = CURRENT_TIMESTAMP, last_checked_at = CURRENT_TIMESTAMP,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, result.UserID, result.Username, result.DisplayName, id)
+	return err
 }
 
 func (s *operationsService) storeAccountAuthError(c *gin.Context, id int64, authErr error) {
