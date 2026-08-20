@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   Activity,
   Bot,
+  Camera,
   CheckCircle2,
 	ClipboardPaste,
   Download,
@@ -41,6 +42,7 @@ import {
   type ReleaseInfo,
   type SystemInfo,
   type TelegramAccount,
+  type TelegramProfile,
   type TelegramSettings,
 } from './api'
 
@@ -78,12 +80,15 @@ const updateMessage = ref('')
 const error = ref('')
 const success = ref('')
 const activeSection = ref<Section>('overview')
-const accountForm = ref({ phone: '', displayName: '' })
+const accountForm = ref({ phone: '' })
 const accountEntryMode = ref<'batch' | 'single'>('batch')
 const accountImportText = ref('')
 const accountImportErrors = ref<Array<{ line: number; error: string }>>([])
-const accountEditID = ref<number | null>(null)
-const accountEditForm = ref({ displayName: '', remark: '' })
+const accountProfileID = ref<number | null>(null)
+const accountProfileLoading = ref(false)
+const accountProfileForm = ref<TelegramProfile>({ displayName: '', bio: '', username: '', hasPhoto: false })
+const accountAvatar = ref<globalThis.File | null>(null)
+const accountAvatarPreview = ref('')
 const checkingAccounts = ref(false)
 const authorizingAccountID = ref<number | null>(null)
 const telegramCode = ref('')
@@ -227,7 +232,7 @@ async function createAccount() {
   clearNotices()
   try {
     await api.createAccount(accountForm.value)
-    accountForm.value = { phone: '', displayName: '' }
+    accountForm.value = { phone: '' }
     accounts.value = await api.accounts()
     overview.value = await api.overview()
     success.value = '账号已登记，等待 Telegram 授权连接。'
@@ -238,30 +243,70 @@ async function createAccount() {
   }
 }
 
-async function openAccountEdit(item: TelegramAccount) {
+async function openAccountProfile(item: TelegramAccount) {
 	const table = window.document.querySelector('.table-wrap')
-	accountEditID.value = item.id
-	accountEditForm.value = { displayName: item.displayName, remark: item.remark }
+	closeAccountProfile()
+	accountProfileID.value = item.id
+	accountProfileLoading.value = true
 	clearNotices()
 	await nextTick()
 	if (window.innerWidth <= 620 && table) table.scrollLeft = 0
+	try {
+		const profile = await api.accountProfile(item.id)
+		if (accountProfileID.value === item.id) accountProfileForm.value = profile
+	} catch (err) {
+		if (accountProfileID.value === item.id) {
+			closeAccountProfile()
+			error.value = messageFrom(err, '读取 Telegram 资料失败')
+		}
+	} finally {
+		if (accountProfileID.value === item.id) accountProfileLoading.value = false
+	}
 }
 
-function closeAccountEdit() {
-	accountEditID.value = null
-	accountEditForm.value = { displayName: '', remark: '' }
+function closeAccountProfile() {
+	if (accountAvatarPreview.value) window.URL.revokeObjectURL(accountAvatarPreview.value)
+	accountProfileID.value = null
+	accountProfileForm.value = { displayName: '', bio: '', username: '', hasPhoto: false }
+	accountAvatar.value = null
+	accountAvatarPreview.value = ''
 }
 
-async function saveAccountEdit(item: TelegramAccount) {
-	saving.value = `account-edit-${item.id}`
+function selectAccountAvatar(event: globalThis.Event) {
+	const input = event.target as globalThis.HTMLInputElement
+	const file = input.files?.[0] || null
+	if (!file) return
+	if (!['image/jpeg', 'image/png'].includes(file.type)) {
+		error.value = '头像仅支持 JPG 或 PNG 图片'
+		input.value = ''
+		return
+	}
+	if (file.size > 5 * 1024 * 1024) {
+		error.value = '头像文件不能超过 5 MB'
+		input.value = ''
+		return
+	}
+	if (accountAvatarPreview.value) window.URL.revokeObjectURL(accountAvatarPreview.value)
+	accountAvatar.value = file
+	accountAvatarPreview.value = window.URL.createObjectURL(file)
+	error.value = ''
+}
+
+async function saveAccountProfile(item: TelegramAccount) {
+	saving.value = `account-profile-${item.id}`
 	clearNotices()
 	try {
-		await api.updateAccount(item.id, accountEditForm.value)
+		const changedAvatar = Boolean(accountAvatar.value)
+		await api.updateTelegramProfile(item.id, {
+			displayName: accountProfileForm.value.displayName,
+			bio: accountProfileForm.value.bio,
+			avatar: accountAvatar.value,
+		})
 		accounts.value = await api.accounts()
-		closeAccountEdit()
-		success.value = '账号昵称和备注已保存。'
+		closeAccountProfile()
+		success.value = changedAvatar ? 'Telegram 昵称、简介和头像已更新。' : 'Telegram 昵称和简介已更新。'
 	} catch (err) {
-		error.value = messageFrom(err, '保存账号信息失败')
+		error.value = messageFrom(err, '修改 Telegram 资料失败')
 	} finally {
 		saving.value = ''
 	}
@@ -650,7 +695,7 @@ onBeforeUnmount(() => {
             <div class="section-heading"><div><h2>批量导入账号</h2><p>每行一个：手机号----取码链接，也支持 |、Tab、逗号和分号。</p></div><ClipboardPaste :size="20" /></div>
             <div class="segmented" role="tablist" aria-label="账号录入方式"><button type="button" :class="{ active: accountEntryMode === 'batch' }" @click="accountEntryMode = 'batch'"><ListChecks :size="15" />批量导入</button><button type="button" :class="{ active: accountEntryMode === 'single' }" @click="accountEntryMode = 'single'"><Plus :size="15" />手动登记</button></div>
             <form v-if="accountEntryMode === 'batch'" class="account-import-form" @submit.prevent="importAccounts"><label>账号清单<textarea v-model="accountImportText" rows="7" placeholder="+1xxxxxxxxxx----https://vendor.example/…/GetHTML&#10;+86xxxxxxxxxxx----https://vendor.example/…/GetHTML" required></textarea></label><div class="form-actions"><span>支持批次内重复导入，系统会自动更新链接</span><button class="primary" :disabled="saving === 'account-import'"><Download :size="16" />{{ saving === 'account-import' ? '导入中' : '导入账号' }}</button></div></form>
-            <form v-else class="form-grid account-form" @submit.prevent="createAccount"><label>手机号<input v-model="accountForm.phone" placeholder="+8613800138000" autocomplete="tel" required /></label><label>账号名称<input v-model="accountForm.displayName" placeholder="例如：获客账号 A" maxlength="80" /></label><button class="primary" :disabled="saving === 'account'"><Plus :size="17" />{{ saving === 'account' ? '添加中' : '登记账号' }}</button></form>
+            <form v-else class="form-grid account-form" @submit.prevent="createAccount"><label>手机号<input v-model="accountForm.phone" placeholder="+8613800138000" autocomplete="tel" required /></label><button class="primary" :disabled="saving === 'account'"><Plus :size="17" />{{ saving === 'account' ? '添加中' : '登记账号' }}</button></form>
             <div v-if="accountImportErrors.length" class="import-errors"><strong>{{ accountImportErrors.length }} 行未导入</strong><span v-for="problem in accountImportErrors" :key="problem.line">第 {{ problem.line }} 行：{{ problem.error }}</span></div>
           </section>
           <section class="workspace-panel account-actions-panel"><div class="section-heading"><div><h2>连接检查</h2><p>只检测已有加密会话的账号</p></div><Link2 :size="20" /></div><button class="secondary wide" :disabled="checkingAccounts || !accounts.some((item) => item.hasSession)" @click="checkAllAccounts"><RefreshCw :size="16" :class="{ spinning: checkingAccounts }" />{{ checkingAccounts ? '正在安排检测' : '检测全部已登录账号' }}</button><div class="action-note"><CheckCircle2 :size="16" /><span>在线表示最近一次 Telegram API 检查成功；受限和会话失效会单独标色。</span></div></section>
@@ -663,12 +708,12 @@ onBeforeUnmount(() => {
               <tbody>
                 <template v-for="item in accounts" :key="item.id">
                   <tr>
-                    <td><strong>{{ item.displayName || '未命名账号' }}</strong><small v-if="item.remark" class="account-remark">{{ item.remark }}</small><small v-if="item.username" class="account-username">@{{ item.username }}</small><small v-if="item.lastError" class="account-error">{{ item.lastError }}</small></td>
+                    <td><strong>{{ item.displayName || '未命名账号' }}</strong><small v-if="item.username" class="account-username">@{{ item.username }}</small><small v-if="item.lastError" class="account-error">{{ item.lastError }}</small></td>
                     <td>{{ item.phone }}</td>
                     <td><span class="status" :class="accountStatusTone(item.status)"><span class="status-dot-inline"></span>{{ statusText(item.status) }}</span><small v-if="item.lastCheckedAt" class="account-username">检查于 {{ formatDate(item.lastCheckedAt) }}</small></td>
                     <td>{{ formatDate(item.lastSeenAt || item.createdAt) }}</td>
                     <td class="account-actions">
-                      <button class="secondary compact" :disabled="saving === `account-edit-${item.id}`" title="编辑账号昵称和备注" @click="openAccountEdit(item)"><Pencil :size="15" />编辑</button>
+                      <button v-if="item.hasSession && !['unauthorized', 'banned', 'logging_in', 'checking'].includes(item.status)" class="secondary compact" :disabled="saving === `account-profile-${item.id}`" title="修改 Telegram 昵称、简介和头像" @click="openAccountProfile(item)"><Pencil :size="15" />Telegram 资料</button>
                       <button v-if="item.hasCodeUrl && ['pending', 'error', 'unauthorized', 'flood_wait'].includes(item.status)" class="secondary compact" :disabled="saving === `auto-${item.id}` || !capabilities?.telegramConfigured" title="使用取码链接自动登录" @click="autoLoginAccount(item)"><LogIn :size="15" />{{ saving === `auto-${item.id}` ? '启动中' : '自动登录' }}</button>
                       <button v-if="item.hasSession && !['logging_in', 'checking'].includes(item.status)" class="secondary compact" :disabled="saving === `check-${item.id}`" title="检测账号当前存活状态" @click="checkAccount(item)"><RefreshCw :size="15" />检测</button>
                       <button v-if="item.status === 'pending' || item.status === 'offline' || item.status === 'error'" class="secondary compact" :disabled="saving === `auth-${item.id}` || !capabilities?.telegramConfigured" title="发送 Telegram 验证码" @click="requestTelegramCode(item)"><Smartphone :size="15" />手动登录</button>
@@ -677,12 +722,19 @@ onBeforeUnmount(() => {
                       <button class="icon-button danger" title="删除账号" :disabled="saving === `account-${item.id}`" @click="deleteAccount(item.id)"><Trash2 :size="16" /></button>
                     </td>
                   </tr>
-                  <tr v-if="accountEditID === item.id" class="account-edit-row">
+                  <tr v-if="accountProfileID === item.id" class="account-profile-row">
                     <td colspan="5">
-                      <form class="account-edit-form" @submit.prevent="saveAccountEdit(item)">
-                        <label>账号昵称<input v-model="accountEditForm.displayName" maxlength="80" placeholder="例如：获客账号 A" /></label>
-                        <label>备注<textarea v-model="accountEditForm.remark" maxlength="500" rows="2" placeholder="记录地区、用途或负责人等信息"></textarea></label>
-                        <div class="account-edit-actions"><button type="button" class="secondary compact" @click="closeAccountEdit">取消</button><button type="submit" class="primary compact" :disabled="saving === `account-edit-${item.id}`"><Save :size="15" />{{ saving === `account-edit-${item.id}` ? '保存中' : '保存' }}</button></div>
+                      <div v-if="accountProfileLoading" class="account-profile-loading"><RefreshCw :size="18" class="spinning" />正在读取 Telegram 资料</div>
+                      <form v-else class="account-profile-form" @submit.prevent="saveAccountProfile(item)">
+                        <div class="profile-avatar-editor">
+                          <div class="profile-avatar-preview"><img v-if="accountAvatarPreview" :src="accountAvatarPreview" alt="新头像预览" /><Camera v-else :size="24" /></div>
+                          <div><strong>Telegram 头像</strong><small>{{ accountAvatar ? accountAvatar.name : accountProfileForm.hasPhoto ? '当前已有头像' : '当前未设置头像' }}</small><label class="secondary compact profile-file-button"><Camera :size="15" />选择头像<input type="file" accept="image/jpeg,image/png" @change="selectAccountAvatar" /></label></div>
+                        </div>
+                        <div class="account-profile-fields">
+                          <label>Telegram 昵称<input v-model="accountProfileForm.displayName" maxlength="64" required /></label>
+                          <label>Telegram 简介<textarea v-model="accountProfileForm.bio" maxlength="70" rows="2" placeholder="最多 70 个字符"></textarea></label>
+                        </div>
+                        <div class="account-profile-actions"><button type="button" class="secondary compact" @click="closeAccountProfile">取消</button><button type="submit" class="primary compact" :disabled="saving === `account-profile-${item.id}`"><Save :size="15" />{{ saving === `account-profile-${item.id}` ? '正在写入 Telegram' : '保存到 Telegram' }}</button></div>
                       </form>
                     </td>
                   </tr>

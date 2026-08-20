@@ -4,7 +4,12 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,10 +27,15 @@ type fakeAccountAuthorizer struct {
 	passwordResult accountAuthResult
 	autoResult     accountAuthResult
 	checkResult    accountAuthResult
+	profileResult  telegramProfile
+	updatedProfile telegramProfile
 	phone          string
 	codeHash       string
 	code           string
 	password       string
+	displayName    string
+	bio            string
+	photo          []byte
 }
 
 func (f *fakeAccountAuthorizer) RequestCode(_ context.Context, _ int64, phone string) (accountAuthResult, error) {
@@ -52,6 +62,15 @@ func (f *fakeAccountAuthorizer) Check(_ context.Context, _ int64) (accountAuthRe
 	return f.checkResult, nil
 }
 
+func (f *fakeAccountAuthorizer) Profile(_ context.Context, _ int64) (telegramProfile, error) {
+	return f.profileResult, nil
+}
+
+func (f *fakeAccountAuthorizer) UpdateProfile(_ context.Context, _ int64, displayName, bio string, photo []byte) (telegramProfile, error) {
+	f.displayName, f.bio, f.photo = displayName, bio, photo
+	return f.updatedProfile, nil
+}
+
 func TestAccountAuthorizationFlow(t *testing.T) {
 	db := openTelegramTestDB(t)
 	authorizer := &fakeAccountAuthorizer{
@@ -61,7 +80,7 @@ func TestAccountAuthorizationFlow(t *testing.T) {
 	}
 	handler := telegramOperationsHandler(db, authorizer)
 
-	assertResponse(t, serveJSON(handler, http.MethodPost, "/api/v1/accounts", `{"phone":"+8613800138000","displayName":""}`, nil), http.StatusCreated, `"status":"pending"`)
+	assertResponse(t, serveJSON(handler, http.MethodPost, "/api/v1/accounts", `{"phone":"+8613800138000","displayName":"本地登记名"}`, nil), http.StatusCreated, `"status":"pending"`)
 	assertResponse(t, serveJSON(handler, http.MethodPost, "/api/v1/accounts/1/auth/code", `{}`, nil), http.StatusOK, `"status":"code_sent"`)
 	assertAccountAuthState(t, db, 1, "code_sent", "telegram-code-hash")
 
@@ -70,7 +89,14 @@ func TestAccountAuthorizationFlow(t *testing.T) {
 
 	assertResponse(t, serveJSON(handler, http.MethodPost, "/api/v1/accounts/1/auth/password", `{"password":"two-factor-secret"}`, nil), http.StatusOK, `"status":"authorized"`)
 	response := serveJSON(handler, http.MethodGet, "/api/v1/accounts", "", nil)
-	assertResponse(t, response, http.StatusOK, `"username":"teleflow_owner"`)
+	assertResponse(t, response, http.StatusOK, `"displayName":"Teleflow Owner"`)
+	var username string
+	if err := db.QueryRow("SELECT username FROM telegram_accounts WHERE id = 1").Scan(&username); err != nil {
+		t.Fatal(err)
+	}
+	if username != "teleflow_owner" {
+		t.Fatalf("stored Telegram username = %q", username)
+	}
 
 	if authorizer.phone != "+8613800138000" || authorizer.codeHash != "telegram-code-hash" || authorizer.code != "12345" || authorizer.password != "two-factor-secret" {
 		t.Fatalf("unexpected authorization inputs: %+v", authorizer)
@@ -83,6 +109,72 @@ func TestAccountAuthorizationRequiresCorrectState(t *testing.T) {
 	assertResponse(t, serveJSON(handler, http.MethodPost, "/api/v1/accounts", `{"phone":"+8613800138001"}`, nil), http.StatusCreated, `"status":"pending"`)
 	assertResponse(t, serveJSON(handler, http.MethodPost, "/api/v1/accounts/1/auth/verify", `{"code":"12345"}`, nil), http.StatusConflict, "请先发送验证码")
 	assertResponse(t, serveJSON(handler, http.MethodPost, "/api/v1/accounts/1/auth/password", `{"password":"secret"}`, nil), http.StatusConflict, "当前不需要两步验证密码")
+}
+
+func TestTelegramProfileFlow(t *testing.T) {
+	db := openTelegramTestDB(t)
+	authorizer := &fakeAccountAuthorizer{
+		profileResult:  telegramProfile{DisplayName: "旧昵称", Bio: "旧简介", Username: "old_user", HasPhoto: true},
+		updatedProfile: telegramProfile{DisplayName: "新昵称", Bio: "新简介", Username: "old_user", HasPhoto: true},
+	}
+	handler := telegramOperationsHandler(db, authorizer)
+	assertResponse(t, serveJSON(handler, http.MethodPost, "/api/v1/accounts", `{"phone":"+8613800138010"}`, nil), http.StatusCreated, `"status":"pending"`)
+	if _, err := db.Exec("UPDATE telegram_accounts SET session_ciphertext = X'01', status = 'restricted' WHERE id = 1"); err != nil {
+		t.Fatal(err)
+	}
+	assertResponse(t, serveJSON(handler, http.MethodGet, "/api/v1/accounts/1/profile", "", nil), http.StatusOK, `"bio":"旧简介"`)
+	var status string
+	if err := db.QueryRow("SELECT status FROM telegram_accounts WHERE id = 1").Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "restricted" {
+		t.Fatalf("profile read changed account status to %q", status)
+	}
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("displayName", "新昵称"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("bio", "新简介"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("avatar", "avatar.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	avatar := image.NewRGBA(image.Rect(0, 0, 160, 160))
+	for y := 0; y < 160; y++ {
+		for x := 0; x < 160; x++ {
+			avatar.Set(x, y, color.RGBA{R: 32, G: 140, B: 110, A: 255})
+		}
+	}
+	if err := jpeg.Encode(part, avatar, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/accounts/1/profile", body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	assertResponse(t, response, http.StatusOK, `"displayName":"新昵称"`)
+	if authorizer.displayName != "新昵称" || authorizer.bio != "新简介" || len(authorizer.photo) == 0 {
+		t.Fatalf("unexpected profile input: name=%q bio=%q photo=%d", authorizer.displayName, authorizer.bio, len(authorizer.photo))
+	}
+	if contentType := http.DetectContentType(authorizer.photo); contentType != "image/jpeg" {
+		t.Fatalf("normalized avatar content type = %q", contentType)
+	}
+	list := serveJSON(handler, http.MethodGet, "/api/v1/accounts", "", nil)
+	assertResponse(t, list, http.StatusOK, `"displayName":"新昵称"`)
+}
+
+func TestTelegramProfileRequiresLoggedInAccount(t *testing.T) {
+	db := openTelegramTestDB(t)
+	handler := telegramOperationsHandler(db, &fakeAccountAuthorizer{})
+	assertResponse(t, serveJSON(handler, http.MethodPost, "/api/v1/accounts", `{"phone":"+8613800138011"}`, nil), http.StatusCreated, `"status":"pending"`)
+	assertResponse(t, serveJSON(handler, http.MethodGet, "/api/v1/accounts/1/profile", "", nil), http.StatusConflict, "尚未登录")
 }
 
 func TestImportQueuesAutoLoginWhenTelegramIsConfigured(t *testing.T) {

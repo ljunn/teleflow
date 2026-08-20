@@ -51,7 +51,6 @@ export interface TelegramAccount {
   id: number
   phone: string
   displayName: string
-  remark: string
   status: string
   username: string
 	lastError: string
@@ -62,6 +61,13 @@ export interface TelegramAccount {
 	lastCheckedAt?: string
   codeSentAt?: string
   createdAt: string
+}
+
+export interface TelegramProfile {
+  displayName: string
+  bio: string
+  username: string
+  hasPhoto: boolean
 }
 
 export interface AccountImportResult {
@@ -105,16 +111,29 @@ export interface RelaySettings {
   updatedAt?: string
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...init?.headers },
-  })
+async function responseJSON<T>(response: globalThis.Response): Promise<T> {
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { error?: string } | null
     throw new Error(body?.error || `请求失败（${response.status}）`)
   }
   return response.json() as Promise<T>
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, {
+    ...init,
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...init?.headers },
+  })
+  return responseJSON<T>(response)
+}
+
+async function updateTelegramProfile(id: number, input: { displayName: string; bio: string; avatar: globalThis.File | null }) {
+  const form = new globalThis.FormData()
+  form.set('displayName', input.displayName)
+  form.set('bio', input.bio)
+  if (input.avatar) form.set('avatar', input.avatar)
+  const response = await fetch(`/api/v1/accounts/${id}/profile`, { method: 'PUT', headers: { Accept: 'application/json' }, body: form })
+  return responseJSON<TelegramProfile>(response)
 }
 
 export const api = {
@@ -129,8 +148,9 @@ export const api = {
   telegramSettings: () => request<TelegramSettings>('/api/v1/telegram/settings'),
   updateTelegramSettings: (input: { apiId: number; apiHash: string }) => request<{ ok: boolean; configured: boolean }>('/api/v1/telegram/settings', { method: 'PUT', body: JSON.stringify(input) }),
   accounts: () => request<TelegramAccount[]>('/api/v1/accounts'),
-  createAccount: (input: { phone: string; displayName: string }) => request<{ id: number; status: string }>('/api/v1/accounts', { method: 'POST', body: JSON.stringify(input) }),
-  updateAccount: (id: number, input: { displayName: string; remark: string }) => request<{ ok: boolean }>(`/api/v1/accounts/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+  createAccount: (input: { phone: string }) => request<{ id: number; status: string }>('/api/v1/accounts', { method: 'POST', body: JSON.stringify(input) }),
+	accountProfile: (id: number) => request<TelegramProfile>(`/api/v1/accounts/${id}/profile`),
+	updateTelegramProfile,
 	importAccounts: (text: string) => request<AccountImportResult>('/api/v1/accounts/import', { method: 'POST', body: JSON.stringify({ text }) }),
   requestAccountCode: (id: number) => request<{ status: string }>(`/api/v1/accounts/${id}/auth/code`, { method: 'POST', body: '{}' }),
   verifyAccountCode: (id: number, code: string) => request<{ status: string }>(`/api/v1/accounts/${id}/auth/verify`, { method: 'POST', body: JSON.stringify({ code }) }),

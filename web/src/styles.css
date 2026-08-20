@@ -94,7 +94,7 @@ dd.hash { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; align-items: end; }
 .form-grid label { display: grid; gap: 7px; min-width: 0; }
 .form-grid .full { grid-column: 1 / -1; }
-.account-form { grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto; }
+.account-form { grid-template-columns: minmax(220px, 1fr) auto; }
 .account-status-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid #dfe4e7; border-radius: 7px; background: #fff; }
 .account-status-strip div { min-height: 82px; padding: 15px 18px; display: flex; flex-direction: column; justify-content: center; gap: 7px; border-right: 1px solid #edf0f2; }
 .account-status-strip div:last-child { border-right: 0; }
@@ -144,20 +144,29 @@ th.actions, td.actions { width: 56px; padding-right: 0; text-align: right; }
 td.actions .icon-button { margin-left: auto; }
 .account-username, .account-error { display: block; margin-top: 4px; font-size: 11px; font-weight: 400; }
 .account-username { color: #6f7983; }
-.account-remark { display: block; margin-top: 4px; color: #53635e; font-size: 11px; font-weight: 400; white-space: pre-wrap; overflow-wrap: anywhere; }
 .account-error { max-width: 220px; color: #a43125; white-space: normal; }
 th.account-actions, td.account-actions { min-width: 330px; padding-right: 0; text-align: right; }
 td.account-actions { display: flex; justify-content: flex-end; align-items: center; gap: 7px; }
 .secondary.compact { min-height: 34px; padding: 0 10px; font-size: 12px; }
-.account-edit-row td { padding: 0 0 14px; border-bottom: 1px solid #dce2e6; }
-.account-edit-form { padding: 14px; display: grid; grid-template-columns: minmax(180px, .7fr) minmax(240px, 1fr) auto; align-items: end; gap: 12px; background: #f7faf9; border-left: 3px solid #178262; }
-.account-edit-form label { display: grid; gap: 7px; color: #48525c; font-size: 12px; font-weight: 600; }
-.account-edit-form input, .account-edit-form textarea { width: 100%; border: 1px solid #cbd3d8; border-radius: 6px; color: #17202a; background: #fff; outline: none; }
-.account-edit-form input { height: 40px; padding: 0 11px; }
-.account-edit-form textarea { min-height: 40px; padding: 10px 11px; resize: vertical; }
-.account-edit-form input:focus, .account-edit-form textarea:focus { border-color: #087f5b; box-shadow: 0 0 0 3px rgba(8, 127, 91, .12); }
-.account-edit-actions { display: flex; align-items: center; gap: 7px; }
-.account-edit-actions .primary { min-height: 34px; }
+.account-profile-row td { padding: 0 0 14px; border-bottom: 1px solid #dce2e6; }
+.account-profile-loading { min-height: 112px; padding: 14px; display: flex; align-items: center; justify-content: center; gap: 9px; color: #65717b; background: #f7faf9; border-left: 3px solid #178262; }
+.account-profile-form { padding: 14px; display: grid; grid-template-columns: minmax(190px, .65fr) minmax(260px, 1fr) auto; align-items: end; gap: 16px; background: #f7faf9; border-left: 3px solid #178262; }
+.profile-avatar-editor { min-width: 0; display: flex; align-items: center; gap: 12px; }
+.profile-avatar-editor > div:last-child { min-width: 0; display: grid; justify-items: start; gap: 5px; }
+.profile-avatar-editor strong { font-size: 12px; }
+.profile-avatar-editor small { max-width: 120px; color: #748079; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-avatar-preview { width: 64px; height: 64px; flex: none; border: 1px solid #cbd6d1; border-radius: 50%; color: #087f5b; background: #eaf5f1; display: grid; place-items: center; overflow: hidden; }
+.profile-avatar-preview img { width: 100%; height: 100%; object-fit: cover; }
+.profile-file-button { position: relative; overflow: hidden; cursor: pointer; }
+.profile-file-button input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.account-profile-fields { min-width: 0; display: grid; grid-template-columns: minmax(150px, .7fr) minmax(220px, 1fr); gap: 12px; }
+.account-profile-fields label { min-width: 0; display: grid; gap: 7px; color: #48525c; font-size: 12px; font-weight: 600; }
+.account-profile-fields input, .account-profile-fields textarea { width: 100%; border: 1px solid #cbd3d8; border-radius: 6px; color: #17202a; background: #fff; outline: none; }
+.account-profile-fields input { height: 40px; padding: 0 11px; }
+.account-profile-fields textarea { min-height: 40px; padding: 10px 11px; resize: vertical; }
+.account-profile-fields input:focus, .account-profile-fields textarea:focus { border-color: #087f5b; box-shadow: 0 0 0 3px rgba(8, 127, 91, .12); }
+.account-profile-actions { display: flex; align-items: center; gap: 7px; }
+.account-profile-actions .primary { min-height: 34px; white-space: nowrap; }
 .auth-step-row td { padding: 0 0 14px; border-bottom: 1px solid #dce2e6; }
 .account-auth-step { padding: 14px; display: grid; grid-template-columns: minmax(210px, 1fr) minmax(150px, .7fr) auto; align-items: end; gap: 12px; background: #f5faf8; border-left: 3px solid #178262; }
 .account-auth-step strong { font-size: 13px; }
@@ -245,10 +254,16 @@ td.account-actions { display: flex; justify-content: flex-end; align-items: cent
   .panel, .workspace-panel { padding: 17px; }
   .form-grid .full { grid-column: auto; }
   .account-form .primary, .discovery-form .primary, .campaign-form .primary { width: 100%; justify-self: stretch; }
+	.table-wrap table { min-width: 0; }
+	.table-wrap th:nth-child(2), .table-wrap td:nth-child(2),
+	.table-wrap th:nth-child(4), .table-wrap td:nth-child(4) { display: none; }
+	th.account-actions, td.account-actions { width: 142px; min-width: 142px; }
+	td.account-actions { flex-wrap: wrap; justify-content: flex-end; }
   .account-auth-step { grid-template-columns: 1fr; align-items: stretch; }
   .account-auth-step .primary { width: 100%; }
-  .account-edit-form { width: calc(100vw - 64px); grid-template-columns: 1fr; align-items: stretch; }
-  .account-edit-actions { justify-content: flex-end; }
+  .account-profile-loading, .account-profile-form { width: calc(100vw - 64px); }
+  .account-profile-form, .account-profile-fields { grid-template-columns: 1fr; align-items: stretch; }
+  .account-profile-actions { justify-content: flex-end; }
   dl div { align-items: flex-start; padding: 11px 0; }
   dd { max-width: 64%; }
   .campaign-meta { align-items: flex-start; }

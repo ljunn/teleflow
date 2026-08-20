@@ -17,13 +17,17 @@ import (
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	tgauth "github.com/gotd/td/telegram/auth"
+	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
 	"github.com/ljunn/teleflow/internal/config"
 )
 
-var errTelegramNotConfigured = errors.New("telegram API is not configured")
+var (
+	errTelegramNotConfigured = errors.New("telegram API is not configured")
+	errAccountUnauthorized   = errors.New("telegram account is not authorized")
+)
 
 type accountAuthResult struct {
 	Status      string
@@ -39,6 +43,8 @@ type accountAuthorizer interface {
 	VerifyPassword(ctx context.Context, accountID int64, password string) (accountAuthResult, error)
 	AutoLogin(ctx context.Context, accountID int64, phone, codeURL string) (accountAuthResult, error)
 	Check(ctx context.Context, accountID int64) (accountAuthResult, error)
+	Profile(ctx context.Context, accountID int64) (telegramProfile, error)
+	UpdateProfile(ctx context.Context, accountID int64, displayName, bio string, photo []byte) (telegramProfile, error)
 }
 
 type gotdAccountAuthorizer struct {
@@ -217,6 +223,83 @@ func (a *gotdAccountAuthorizer) Check(ctx context.Context, accountID int64) (acc
 		return nil
 	})
 	return result, err
+}
+
+func (a *gotdAccountAuthorizer) Profile(ctx context.Context, accountID int64) (telegramProfile, error) {
+	var result telegramProfile
+	err := a.run(ctx, accountID, func(runCtx context.Context, client *telegram.Client) error {
+		user, err := authorizedTelegramUser(runCtx, client)
+		if err != nil {
+			return err
+		}
+		full, err := client.API().UsersGetFullUser(runCtx, &tg.InputUserSelf{})
+		if err != nil {
+			return err
+		}
+		bio, _ := full.FullUser.GetAbout()
+		result = telegramProfileFromUser(user, bio)
+		return nil
+	})
+	return result, err
+}
+
+func (a *gotdAccountAuthorizer) UpdateProfile(ctx context.Context, accountID int64, displayName, bio string, photo []byte) (telegramProfile, error) {
+	var result telegramProfile
+	err := a.runWithTimeout(ctx, accountID, 120*time.Second, func(runCtx context.Context, client *telegram.Client) error {
+		if _, err := authorizedTelegramUser(runCtx, client); err != nil {
+			return err
+		}
+		photoUpdated := false
+		if len(photo) > 0 {
+			file, err := uploader.NewUploader(client.API()).FromBytes(runCtx, "avatar.jpg", photo)
+			if err != nil {
+				return err
+			}
+			if _, err := client.API().PhotosUploadProfilePhoto(runCtx, &tg.PhotosUploadProfilePhotoRequest{File: file}); err != nil {
+				return err
+			}
+			photoUpdated = true
+		}
+		request := &tg.AccountUpdateProfileRequest{}
+		request.SetFirstName(displayName)
+		request.SetLastName("")
+		request.SetAbout(bio)
+		updated, err := client.API().AccountUpdateProfile(runCtx, request)
+		if err != nil {
+			return err
+		}
+		user, ok := updated.(*tg.User)
+		if !ok {
+			return fmt.Errorf("unexpected update-profile response %T", updated)
+		}
+		result = telegramProfileFromUser(user, bio)
+		if photoUpdated {
+			result.HasPhoto = true
+		}
+		return nil
+	})
+	return result, err
+}
+
+func authorizedTelegramUser(ctx context.Context, client *telegram.Client) (*tg.User, error) {
+	status, err := client.Auth().Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !status.Authorized || status.User == nil {
+		return nil, errAccountUnauthorized
+	}
+	return status.User, nil
+}
+
+func telegramProfileFromUser(user *tg.User, bio string) telegramProfile {
+	_, hasPhoto := user.Photo.(*tg.UserProfilePhoto)
+	return telegramProfile{
+		DisplayName: strings.TrimSpace(strings.Join([]string{user.FirstName, user.LastName}, " ")),
+		Bio:         bio,
+		Username:    user.Username,
+		HasPhoto:    hasPhoto,
+	}
 }
 
 func (a *gotdAccountAuthorizer) run(ctx context.Context, accountID int64, callback func(context.Context, *telegram.Client) error) error {
