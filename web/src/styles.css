@@ -144,10 +144,20 @@ th.actions, td.actions { width: 56px; padding-right: 0; text-align: right; }
 td.actions .icon-button { margin-left: auto; }
 .account-username, .account-error { display: block; margin-top: 4px; font-size: 11px; font-weight: 400; }
 .account-username { color: #6f7983; }
+.account-remark { display: block; margin-top: 4px; color: #53635e; font-size: 11px; font-weight: 400; white-space: pre-wrap; overflow-wrap: anywhere; }
 .account-error { max-width: 220px; color: #a43125; white-space: normal; }
 th.account-actions, td.account-actions { min-width: 330px; padding-right: 0; text-align: right; }
 td.account-actions { display: flex; justify-content: flex-end; align-items: center; gap: 7px; }
 .secondary.compact { min-height: 34px; padding: 0 10px; font-size: 12px; }
+.account-edit-row td { padding: 0 0 14px; border-bottom: 1px solid #dce2e6; }
+.account-edit-form { padding: 14px; display: grid; grid-template-columns: minmax(180px, .7fr) minmax(240px, 1fr) auto; align-items: end; gap: 12px; background: #f7faf9; border-left: 3px solid #178262; }
+.account-edit-form label { display: grid; gap: 7px; color: #48525c; font-size: 12px; font-weight: 600; }
+.account-edit-form input, .account-edit-form textarea { width: 100%; border: 1px solid #cbd3d8; border-radius: 6px; color: #17202a; background: #fff; outline: none; }
+.account-edit-form input { height: 40px; padding: 0 11px; }
+.account-edit-form textarea { min-height: 40px; padding: 10px 11px; resize: vertical; }
+.account-edit-form input:focus, .account-edit-form textarea:focus { border-color: #087f5b; box-shadow: 0 0 0 3px rgba(8, 127, 91, .12); }
+.account-edit-actions { display: flex; align-items: center; gap: 7px; }
+.account-edit-actions .primary { min-height: 34px; }
 .auth-step-row td { padding: 0 0 14px; border-bottom: 1px solid #dce2e6; }
 .account-auth-step { padding: 14px; display: grid; grid-template-columns: minmax(210px, 1fr) minmax(150px, .7fr) auto; align-items: end; gap: 12px; background: #f5faf8; border-left: 3px solid #178262; }
 .account-auth-step strong { font-size: 13px; }
@@ -237,6 +247,8 @@ td.account-actions { display: flex; justify-content: flex-end; align-items: cent
   .account-form .primary, .discovery-form .primary, .campaign-form .primary { width: 100%; justify-self: stretch; }
   .account-auth-step { grid-template-columns: 1fr; align-items: stretch; }
   .account-auth-step .primary { width: 100%; }
+  .account-edit-form { width: calc(100vw - 64px); grid-template-columns: 1fr; align-items: stretch; }
+  .account-edit-actions { justify-content: flex-end; }
   dl div { align-items: flex-start; padding: 11px 0; }
   dd { max-width: 64%; }
   .campaign-meta { align-items: flex-start; }

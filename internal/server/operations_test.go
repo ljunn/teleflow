@@ -35,6 +35,8 @@ func TestOperationsFlow(t *testing.T) {
 	assertResponse(t, serveJSON(handler, http.MethodGet, "/api/v1/capabilities", "", session), http.StatusOK, `"telegramConfigured":false`)
 	assertResponse(t, serveJSON(handler, http.MethodPost, "/api/v1/accounts", `{"phone":"+8613800138000","displayName":"获客账号 A"}`, session), http.StatusCreated, `"status":"pending"`)
 	assertResponse(t, serveJSON(handler, http.MethodGet, "/api/v1/accounts", "", session), http.StatusOK, `"displayName":"获客账号 A"`)
+	assertResponse(t, serveJSON(handler, http.MethodPut, "/api/v1/accounts/1", `{"displayName":"获客账号 B","remark":"华东地区"}`, session), http.StatusOK, `"ok":true`)
+	assertResponse(t, serveJSON(handler, http.MethodGet, "/api/v1/accounts", "", session), http.StatusOK, `"remark":"华东地区"`)
 	assertResponse(t, serveJSON(handler, http.MethodPost, "/api/v1/accounts", `{"phone":"+8613800138000"}`, session), http.StatusConflict, "该手机号已存在")
 	assertResponse(t, serveJSON(handler, http.MethodPost, "/api/v1/accounts/1/auth/code", `{}`, session), http.StatusServiceUnavailable, "请先配置 Telegram API")
 

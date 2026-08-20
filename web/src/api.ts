@@ -51,6 +51,7 @@ export interface TelegramAccount {
   id: number
   phone: string
   displayName: string
+  remark: string
   status: string
   username: string
 	lastError: string
@@ -129,6 +130,7 @@ export const api = {
   updateTelegramSettings: (input: { apiId: number; apiHash: string }) => request<{ ok: boolean; configured: boolean }>('/api/v1/telegram/settings', { method: 'PUT', body: JSON.stringify(input) }),
   accounts: () => request<TelegramAccount[]>('/api/v1/accounts'),
   createAccount: (input: { phone: string; displayName: string }) => request<{ id: number; status: string }>('/api/v1/accounts', { method: 'POST', body: JSON.stringify(input) }),
+  updateAccount: (id: number, input: { displayName: string; remark: string }) => request<{ ok: boolean }>(`/api/v1/accounts/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
 	importAccounts: (text: string) => request<AccountImportResult>('/api/v1/accounts/import', { method: 'POST', body: JSON.stringify({ text }) }),
   requestAccountCode: (id: number) => request<{ status: string }>(`/api/v1/accounts/${id}/auth/code`, { method: 'POST', body: '{}' }),
   verifyAccountCode: (id: number, code: string) => request<{ status: string }>(`/api/v1/accounts/${id}/auth/verify`, { method: 'POST', body: JSON.stringify({ code }) }),

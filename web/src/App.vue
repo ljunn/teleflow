@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   Activity,
   Bot,
@@ -17,10 +17,12 @@ import {
   Megaphone,
   MessageSquareReply,
   Pause,
+  Pencil,
   Play,
   Plus,
   Radio,
   RefreshCw,
+  Save,
   Search,
   Settings,
   ShieldCheck,
@@ -80,6 +82,8 @@ const accountForm = ref({ phone: '', displayName: '' })
 const accountEntryMode = ref<'batch' | 'single'>('batch')
 const accountImportText = ref('')
 const accountImportErrors = ref<Array<{ line: number; error: string }>>([])
+const accountEditID = ref<number | null>(null)
+const accountEditForm = ref({ displayName: '', remark: '' })
 const checkingAccounts = ref(false)
 const authorizingAccountID = ref<number | null>(null)
 const telegramCode = ref('')
@@ -232,6 +236,35 @@ async function createAccount() {
   } finally {
     saving.value = ''
   }
+}
+
+async function openAccountEdit(item: TelegramAccount) {
+	const table = window.document.querySelector('.table-wrap')
+	accountEditID.value = item.id
+	accountEditForm.value = { displayName: item.displayName, remark: item.remark }
+	clearNotices()
+	await nextTick()
+	if (window.innerWidth <= 620 && table) table.scrollLeft = 0
+}
+
+function closeAccountEdit() {
+	accountEditID.value = null
+	accountEditForm.value = { displayName: '', remark: '' }
+}
+
+async function saveAccountEdit(item: TelegramAccount) {
+	saving.value = `account-edit-${item.id}`
+	clearNotices()
+	try {
+		await api.updateAccount(item.id, accountEditForm.value)
+		accounts.value = await api.accounts()
+		closeAccountEdit()
+		success.value = '账号昵称和备注已保存。'
+	} catch (err) {
+		error.value = messageFrom(err, '保存账号信息失败')
+	} finally {
+		saving.value = ''
+	}
 }
 
 async function importAccounts() {
@@ -622,7 +655,49 @@ onBeforeUnmount(() => {
           </section>
           <section class="workspace-panel account-actions-panel"><div class="section-heading"><div><h2>连接检查</h2><p>只检测已有加密会话的账号</p></div><Link2 :size="20" /></div><button class="secondary wide" :disabled="checkingAccounts || !accounts.some((item) => item.hasSession)" @click="checkAllAccounts"><RefreshCw :size="16" :class="{ spinning: checkingAccounts }" />{{ checkingAccounts ? '正在安排检测' : '检测全部已登录账号' }}</button><div class="action-note"><CheckCircle2 :size="16" /><span>在线表示最近一次 Telegram API 检查成功；受限和会话失效会单独标色。</span></div></section>
         </div>
-        <div class="workspace-panel"><div class="section-heading"><div><h2>账号列表</h2><p>最近检测时间：后台任务完成后自动刷新</p></div><span class="status muted">{{ accounts.length }} 个账号</span></div><div v-if="accounts.length" class="table-wrap"><table><thead><tr><th>账号</th><th>手机号</th><th>状态</th><th>最近活动</th><th class="account-actions">操作</th></tr></thead><tbody><template v-for="item in accounts" :key="item.id"><tr><td><strong>{{ item.displayName || '未命名账号' }}</strong><small v-if="item.username" class="account-username">@{{ item.username }}</small><small v-if="item.lastError" class="account-error">{{ item.lastError }}</small></td><td>{{ item.phone }}</td><td><span class="status" :class="accountStatusTone(item.status)"><span class="status-dot-inline"></span>{{ statusText(item.status) }}</span><small v-if="item.lastCheckedAt" class="account-username">检查于 {{ formatDate(item.lastCheckedAt) }}</small></td><td>{{ formatDate(item.lastSeenAt || item.createdAt) }}</td><td class="account-actions"><button v-if="item.hasCodeUrl && ['pending', 'error', 'unauthorized', 'flood_wait'].includes(item.status)" class="secondary compact" :disabled="saving === `auto-${item.id}` || !capabilities?.telegramConfigured" title="使用取码链接自动登录" @click="autoLoginAccount(item)"><LogIn :size="15" />{{ saving === `auto-${item.id}` ? '启动中' : '自动登录' }}</button><button v-if="item.hasSession && !['logging_in', 'checking'].includes(item.status)" class="secondary compact" :disabled="saving === `check-${item.id}`" title="检测账号当前存活状态" @click="checkAccount(item)"><RefreshCw :size="15" />检测</button><button v-if="item.status === 'pending' || item.status === 'offline' || item.status === 'error'" class="secondary compact" :disabled="saving === `auth-${item.id}` || !capabilities?.telegramConfigured" title="发送 Telegram 验证码" @click="requestTelegramCode(item)"><Smartphone :size="15" />手动登录</button><button v-else-if="item.status === 'code_sent'" class="secondary compact" @click="openAccountAuthorization(item)">输入验证码</button><button v-else-if="item.status === 'password_required'" class="secondary compact" @click="openAccountAuthorization(item)">输入 2FA</button><button class="icon-button danger" title="删除账号" :disabled="saving === `account-${item.id}`" @click="deleteAccount(item.id)"><Trash2 :size="16" /></button></td></tr><tr v-if="authorizingAccountID === item.id && (item.status === 'code_sent' || item.status === 'password_required')" class="auth-step-row"><td colspan="5"><form v-if="item.status === 'code_sent'" class="account-auth-step" @submit.prevent="verifyTelegramCode(item)"><div><strong>输入 Telegram 验证码</strong><p>验证码发送于 {{ formatDate(item.codeSentAt) }}</p></div><input v-model="telegramCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{3,8}" placeholder="验证码" required /><button class="primary" :disabled="saving === `auth-${item.id}`"><ShieldCheck :size="16" />验证</button></form><form v-else class="account-auth-step" @submit.prevent="verifyTelegramPassword(item)"><div><strong>输入两步验证密码</strong><p>密码只用于本次 Telegram SRP 验证，不会保存。</p></div><input v-model="telegramPassword" type="password" autocomplete="current-password" placeholder="2FA 密码" maxlength="256" required /><button class="primary" :disabled="saving === `auth-${item.id}`"><ShieldCheck :size="16" />完成授权</button></form></td></tr></template></tbody></table></div><div v-else class="empty"><Users :size="28" /><p>还没有登记矩阵账号</p></div></div>
+        <div class="workspace-panel">
+          <div class="section-heading"><div><h2>账号列表</h2><p>最近检测时间：后台任务完成后自动刷新</p></div><span class="status muted">{{ accounts.length }} 个账号</span></div>
+          <div v-if="accounts.length" class="table-wrap">
+            <table>
+              <thead><tr><th>账号</th><th>手机号</th><th>状态</th><th>最近活动</th><th class="account-actions">操作</th></tr></thead>
+              <tbody>
+                <template v-for="item in accounts" :key="item.id">
+                  <tr>
+                    <td><strong>{{ item.displayName || '未命名账号' }}</strong><small v-if="item.remark" class="account-remark">{{ item.remark }}</small><small v-if="item.username" class="account-username">@{{ item.username }}</small><small v-if="item.lastError" class="account-error">{{ item.lastError }}</small></td>
+                    <td>{{ item.phone }}</td>
+                    <td><span class="status" :class="accountStatusTone(item.status)"><span class="status-dot-inline"></span>{{ statusText(item.status) }}</span><small v-if="item.lastCheckedAt" class="account-username">检查于 {{ formatDate(item.lastCheckedAt) }}</small></td>
+                    <td>{{ formatDate(item.lastSeenAt || item.createdAt) }}</td>
+                    <td class="account-actions">
+                      <button class="secondary compact" :disabled="saving === `account-edit-${item.id}`" title="编辑账号昵称和备注" @click="openAccountEdit(item)"><Pencil :size="15" />编辑</button>
+                      <button v-if="item.hasCodeUrl && ['pending', 'error', 'unauthorized', 'flood_wait'].includes(item.status)" class="secondary compact" :disabled="saving === `auto-${item.id}` || !capabilities?.telegramConfigured" title="使用取码链接自动登录" @click="autoLoginAccount(item)"><LogIn :size="15" />{{ saving === `auto-${item.id}` ? '启动中' : '自动登录' }}</button>
+                      <button v-if="item.hasSession && !['logging_in', 'checking'].includes(item.status)" class="secondary compact" :disabled="saving === `check-${item.id}`" title="检测账号当前存活状态" @click="checkAccount(item)"><RefreshCw :size="15" />检测</button>
+                      <button v-if="item.status === 'pending' || item.status === 'offline' || item.status === 'error'" class="secondary compact" :disabled="saving === `auth-${item.id}` || !capabilities?.telegramConfigured" title="发送 Telegram 验证码" @click="requestTelegramCode(item)"><Smartphone :size="15" />手动登录</button>
+                      <button v-else-if="item.status === 'code_sent'" class="secondary compact" @click="openAccountAuthorization(item)">输入验证码</button>
+                      <button v-else-if="item.status === 'password_required'" class="secondary compact" @click="openAccountAuthorization(item)">输入 2FA</button>
+                      <button class="icon-button danger" title="删除账号" :disabled="saving === `account-${item.id}`" @click="deleteAccount(item.id)"><Trash2 :size="16" /></button>
+                    </td>
+                  </tr>
+                  <tr v-if="accountEditID === item.id" class="account-edit-row">
+                    <td colspan="5">
+                      <form class="account-edit-form" @submit.prevent="saveAccountEdit(item)">
+                        <label>账号昵称<input v-model="accountEditForm.displayName" maxlength="80" placeholder="例如：获客账号 A" /></label>
+                        <label>备注<textarea v-model="accountEditForm.remark" maxlength="500" rows="2" placeholder="记录地区、用途或负责人等信息"></textarea></label>
+                        <div class="account-edit-actions"><button type="button" class="secondary compact" @click="closeAccountEdit">取消</button><button type="submit" class="primary compact" :disabled="saving === `account-edit-${item.id}`"><Save :size="15" />{{ saving === `account-edit-${item.id}` ? '保存中' : '保存' }}</button></div>
+                      </form>
+                    </td>
+                  </tr>
+                  <tr v-if="authorizingAccountID === item.id && (item.status === 'code_sent' || item.status === 'password_required')" class="auth-step-row">
+                    <td colspan="5">
+                      <form v-if="item.status === 'code_sent'" class="account-auth-step" @submit.prevent="verifyTelegramCode(item)"><div><strong>输入 Telegram 验证码</strong><p>验证码发送于 {{ formatDate(item.codeSentAt) }}</p></div><input v-model="telegramCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{3,8}" placeholder="验证码" required /><button class="primary" :disabled="saving === `auth-${item.id}`"><ShieldCheck :size="16" />验证</button></form>
+                      <form v-else class="account-auth-step" @submit.prevent="verifyTelegramPassword(item)"><div><strong>输入两步验证密码</strong><p>密码只用于本次 Telegram SRP 验证，不会保存。</p></div><input v-model="telegramPassword" type="password" autocomplete="current-password" placeholder="2FA 密码" maxlength="256" required /><button class="primary" :disabled="saving === `auth-${item.id}`"><ShieldCheck :size="16" />完成授权</button></form>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+          <div v-else class="empty"><Users :size="28" /><p>还没有登记矩阵账号</p></div>
+        </div>
       </section>
 
       <section v-else-if="activeSection === 'discover'" class="workspace">

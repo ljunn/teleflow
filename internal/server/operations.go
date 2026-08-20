@@ -27,6 +27,7 @@ type telegramAccount struct {
 	ID            int64   `json:"id"`
 	Phone         string  `json:"phone"`
 	DisplayName   string  `json:"displayName"`
+	Remark        string  `json:"remark"`
 	Status        string  `json:"status"`
 	Username      string  `json:"username"`
 	LastError     string  `json:"lastError"`
@@ -98,6 +99,7 @@ func registerOperationsRoutes(group *gin.RouterGroup, cfg config.Config, db *sql
 	group.GET("/capabilities", service.capabilities)
 	group.GET("/accounts", service.listAccounts)
 	group.POST("/accounts", service.createAccount)
+	group.PUT("/accounts/:id", service.updateAccount)
 	group.POST("/accounts/import", service.importAccounts)
 	group.POST("/accounts/check", service.checkAllAccounts)
 	group.POST("/accounts/:id/auth/code", service.requestAccountCode)
@@ -133,7 +135,7 @@ func (s *operationsService) capabilities(c *gin.Context) {
 
 func (s *operationsService) listAccounts(c *gin.Context) {
 	rows, err := s.db.QueryContext(c.Request.Context(), `
-			SELECT id, phone, display_name, status, username, last_error,
+			SELECT id, phone, display_name, remark, status, username, last_error,
 				code_url_ciphertext IS NOT NULL,
 				session_ciphertext IS NOT NULL AND length(session_ciphertext) > 0,
 				source_type, last_seen_at, last_checked_at,
@@ -149,7 +151,7 @@ func (s *operationsService) listAccounts(c *gin.Context) {
 	for rows.Next() {
 		var item telegramAccount
 		var lastSeen, lastChecked, codeSent sql.NullString
-		if err := rows.Scan(&item.ID, &item.Phone, &item.DisplayName, &item.Status, &item.Username, &item.LastError, &item.HasCodeURL, &item.HasSession, &item.SourceType, &lastSeen, &lastChecked, &codeSent, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Phone, &item.DisplayName, &item.Remark, &item.Status, &item.Username, &item.LastError, &item.HasCodeURL, &item.HasSession, &item.SourceType, &lastSeen, &lastChecked, &codeSent, &item.CreatedAt); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取账号列表失败"})
 			return
 		}
@@ -199,6 +201,46 @@ func (s *operationsService) createAccount(c *gin.Context) {
 	}
 	id, _ := result.LastInsertId()
 	c.JSON(http.StatusCreated, gin.H{"id": id, "status": "pending"})
+}
+
+func (s *operationsService) updateAccount(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var input struct {
+		DisplayName string `json:"displayName"`
+		Remark      string `json:"remark"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请输入账号昵称和备注"})
+		return
+	}
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	input.Remark = strings.TrimSpace(input.Remark)
+	if len([]rune(input.DisplayName)) > 80 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "账号昵称不能超过 80 个字符"})
+		return
+	}
+	if len([]rune(input.Remark)) > 500 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "账号备注不能超过 500 个字符"})
+		return
+	}
+	result, err := s.db.ExecContext(c.Request.Context(), `
+		UPDATE telegram_accounts
+		SET display_name = ?, remark = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, input.DisplayName, input.Remark, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存账号信息失败"})
+		return
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "账号不存在"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (s *operationsService) importAccounts(c *gin.Context) {
